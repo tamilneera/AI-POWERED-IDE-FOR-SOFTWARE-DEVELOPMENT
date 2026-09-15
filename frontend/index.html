@@ -10,7 +10,7 @@
       const resultEl = document.getElementById('result');
       resultEl.textContent = 'Checking...';
       try {
-        const response = await fetch('http://localhost:5000/api/health');
+        const response = await fetch('http://10.231.208.94:5000/api/health');
         const data = await response.json();
         resultEl.textContent = 'Backend says: ' + JSON.stringify(data);
       } catch (err) {
