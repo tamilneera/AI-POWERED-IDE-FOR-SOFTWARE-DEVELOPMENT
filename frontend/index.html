@@ -1,5 +1,22 @@
 <!DOCTYPE html>
 <html>
 <head><title>AI IDE</title></head>
-<body><h1>Frontend Skeleton Running</h1></body>
+<body>
+  <h1>Frontend Skeleton Running</h1>
+  <button id="checkBtn">Check Backend Connection</button>
+  <p id="result">Not checked yet</p>
+  <script>
+    document.getElementById('checkBtn').addEventListener('click', async () => {
+      const resultEl = document.getElementById('result');
+      resultEl.textContent = 'Checking...';
+      try {
+        const response = await fetch('http://localhost:5000/api/health');
+        const data = await response.json();
+        resultEl.textContent = 'Backend says: ' + JSON.stringify(data);
+      } catch (err) {
+        resultEl.textContent = 'Failed to connect: ' + err.message;
+      }
+    });
+  </script>
+</body>
 </html>
