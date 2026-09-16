@@ -1,12 +1,13 @@
 import express from 'express';
 import cors from 'cors';
+import db from './db';
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok' });
+  res.json({ status: 'ok', dbConnected: !!db });
 });
 
 const PORT = 5000;
