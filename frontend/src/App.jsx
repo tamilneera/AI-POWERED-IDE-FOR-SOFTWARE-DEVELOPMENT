@@ -1,15 +1,46 @@
+import { useState, useEffect } from 'react';
 import Editor from '@monaco-editor/react';
 
+const FILE_PATH = 'C:/Users/ANAND/Projects/AI-POWERED-IDE-FOR-SOFTWARE-DEVELOPMENT/test.txt';
+
 function App() {
+  const [code, setCode] = useState('// Loading...');
+  const [status, setStatus] = useState('');
+
+  useEffect(() => {
+    fetch(`http://10.231.208.94:5000/api/files/read?path=${encodeURIComponent(FILE_PATH)}`)
+      .then(res => res.json())
+      .then(data => setCode(data.content || '// (empty file)'))
+      .catch(err => setStatus('Failed to load file: ' + err.message));
+  }, []);
+
+  const handleSave = async () => {
+    setStatus('Saving...');
+    try {
+      const response = await fetch('http://10.231.208.94:5000/api/files/write', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: FILE_PATH, content: code })
+      });
+      const data = await response.json();
+      setStatus(data.success ? 'Saved successfully ✓' : 'Save failed: ' + data.error);
+    } catch (err) {
+      setStatus('Save failed: ' + err.message);
+    }
+  };
+
   return (
     <div style={{ height: '100vh' }}>
-      <h3 style={{ color: 'white', background: '#1e1e1e', margin: 0, padding: '8px' }}>
-        AI-Powered IDE
-      </h3>
+      <div style={{ background: '#1e1e1e', padding: '8px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <h3 style={{ color: 'white', margin: 0 }}>AI-Powered IDE</h3>
+        <button onClick={handleSave} style={{ padding: '4px 12px' }}>Save</button>
+        <span style={{ color: '#0f0' }}>{status}</span>
+      </div>
       <Editor
         height="90vh"
         defaultLanguage="javascript"
-        defaultValue="// Start coding here..."
+        value={code}
+        onChange={(value) => setCode(value)}
         theme="vs-dark"
       />
     </div>
