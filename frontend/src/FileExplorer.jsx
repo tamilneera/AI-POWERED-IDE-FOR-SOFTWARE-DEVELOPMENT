@@ -143,6 +143,16 @@ function FileExplorer({ onFileSelect }) {
     loadTree();
   }, []);
 
+useEffect(() => {
+  const eventSource = new EventSource(
+    `${BACKEND_URL}/api/workspace/watch?path=${encodeURIComponent(PROJECT_PATH)}`
+  );
+  eventSource.onmessage = () => {
+    loadTree();
+  };
+  return () => eventSource.close();
+}, []);
+
   return (
     <div style={{ width: '260px', background: '#252526', height: '100vh', overflowY: 'auto', padding: '8px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
