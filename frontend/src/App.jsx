@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import Editor from '@monaco-editor/react';
 import FileExplorer from './FileExplorer';
 
-const BACKEND_URL = 'http://10.231.208.94:5000'; // same IP
+const BACKEND_URL = 'http://10.231.208.94:5000';
 
 function App() {
   const [code, setCode] = useState('// Select a file from the explorer');
@@ -52,6 +52,11 @@ function App() {
         <div style={{ background: '#1e1e1e', padding: '8px', display: 'flex', alignItems: 'center', gap: '12px' }}>
           <h3 style={{ color: 'white', margin: 0 }}>AI-Powered IDE</h3>
           <span style={{ color: '#aaa', fontSize: '12px' }}>{currentFile || 'No file open'}</span>
+          <select value={language} onChange={(e) => setLanguage(e.target.value)}>
+            <option value="javascript">JavaScript</option>
+            <option value="python">Python</option>
+            <option value="java">Java</option>
+          </select>
           <button onClick={handleSave} style={{ padding: '4px 12px' }}>Save</button>
           <span style={{ color: '#0f0' }}>{status}</span>
         </div>
