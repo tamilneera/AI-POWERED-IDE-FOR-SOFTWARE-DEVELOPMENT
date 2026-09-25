@@ -194,16 +194,29 @@ function FileExplorer({ onFileSelect }) {
   };
 
   return (
-    <div style={{ width: '260px', background: '#252526', height: '100vh', overflowY: 'auto', padding: '8px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+    <div
+      style={{
+        width: '220px',
+        flexShrink: 0,
+        background: '#252526',
+        height: '100%',
+        boxSizing: 'border-box',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 8px 0 8px', flexShrink: 0 }}>
         <h4 style={{ color: 'white', margin: '4px 0' }}>Explorer</h4>
         <span style={{ fontSize: '14px', cursor: 'pointer' }} onClick={loadTree} title="Refresh">🔄</span>
       </div>
-      {status && <div style={{ color: '#f66' }}>{status}</div>}
-      {tree.map((node) => (
-        <TreeItem key={node.path} node={node} onFileClick={onFileSelect} onRefresh={loadTree}
-          depth={0} dragState={dragState.current} onPointerDownItem={onPointerDownItem} hoverPath={hoverPath} />
-      ))}
+      {status && <div style={{ color: '#f66', padding: '0 8px' }}>{status}</div>}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 8px 8px' }}>
+        {tree.map((node) => (
+          <TreeItem key={node.path} node={node} onFileClick={onFileSelect} onRefresh={loadTree}
+            depth={0} dragState={dragState.current} onPointerDownItem={onPointerDownItem} hoverPath={hoverPath} />
+        ))}
+      </div>
     </div>
   );
 }
