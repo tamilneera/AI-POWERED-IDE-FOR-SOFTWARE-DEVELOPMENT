@@ -3,7 +3,7 @@ import Editor from '@monaco-editor/react';
 import FileExplorer from './FileExplorer';
 import BottomPanel from './Components/BottomPanel';
 
-const BACKEND_URL = 'http://10.231.208.94:5000';
+const BACKEND_URL = 'http://10.158.205.94:5000';
 
 function App() {
   const [code, setCode] = useState('// Select a file from the explorer');

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 
-const BACKEND_URL = 'http://10.231.208.94:5000';
+const BACKEND_URL = 'http://10.158.205.94:5000';
 const PROJECT_PATH = 'C:/Users/ANAND/Projects/AI-POWERED-IDE-FOR-SOFTWARE-DEVELOPMENT';
 
 function TreeItem({ node, onFileClick, onRefresh, depth, dragState, onPointerDownItem, hoverPath }) {

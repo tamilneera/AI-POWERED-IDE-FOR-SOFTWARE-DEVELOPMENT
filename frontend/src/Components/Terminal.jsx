@@ -4,7 +4,7 @@ import { FitAddon } from 'xterm-addon-fit';
 import 'xterm/css/xterm.css';
 
 // Point this at your backend's actual host/port.
-const WS_URL = 'ws://10.231.208.94:5000/terminal';
+const WS_URL = 'ws://10.158.205.94:5000/terminal';
 
 export default function Terminal() {
   const containerRef = useRef(null);
