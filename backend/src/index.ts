@@ -5,11 +5,13 @@ import filesRoutes from './filesRoutes';
 import workspaceRoutes from './workspaceRoutes';
 import { createServer } from 'http';
 import { setupTerminalServer } from './terminal';
+import settingsRoutes from './settingsRoutes';
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 app.use('/api/workspace', workspaceRoutes);
+app.use('/api/settings', settingsRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', dbConnected: !!db });

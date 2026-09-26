@@ -38,6 +38,17 @@ db.exec(`
     model_used TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS settings (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  theme TEXT DEFAULT 'dark',
+  font_size INTEGER DEFAULT 14,
+  shortcuts_json TEXT DEFAULT '{}'
+);
+
+INSERT OR IGNORE INTO settings (id, theme, font_size, shortcuts_json)
+VALUES (1, 'dark', 14, '{}');
+
 `);
 
 console.log('Database connected and tables ready.');
