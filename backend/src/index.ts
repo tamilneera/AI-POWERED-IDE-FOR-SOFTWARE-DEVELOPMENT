@@ -6,12 +6,14 @@ import workspaceRoutes from './workspaceRoutes';
 import { createServer } from 'http';
 import { setupTerminalServer } from './terminal';
 import settingsRoutes from './settingsRoutes';
+import searchRoutes from './searchRoutes';
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 app.use('/api/workspace', workspaceRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/search', searchRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', dbConnected: !!db });
