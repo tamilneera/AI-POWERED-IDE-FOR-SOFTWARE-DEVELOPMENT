@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 
-const BACKEND_URL = 'http://10.158.205.94:5000';
+const BACKEND_URL = 'http://10.150.71.94:5000';
 const PROJECT_PATH = 'C:/Users/ANAND/Projects/AI-POWERED-IDE-FOR-SOFTWARE-DEVELOPMENT';
 
 function TreeItem({ node, onFileClick, onRefresh, depth, dragState, onPointerDownItem, hoverPath }) {
@@ -80,7 +80,7 @@ function TreeItem({ node, onFileClick, onRefresh, depth, dragState, onPointerDow
               onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.key === 'Enter' && submitRename()}
               onBlur={submitRename} style={{ flex: 1, fontSize: '13px' }} />
           ) : (
-            <span style={{ flex: 1 }}>{expanded ? '📂' : '📁'} {node.name}</span>
+            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{expanded ? '📂' : '📁'} {node.name}</span>
           )}
           <span style={{ fontSize: '11px', cursor: 'pointer' }} onClick={startCreate} title="New file">➕</span>
           <span style={{ fontSize: '11px', cursor: 'pointer' }} onClick={startRename} title="Rename">✏️</span>
@@ -109,7 +109,7 @@ function TreeItem({ node, onFileClick, onRefresh, depth, dragState, onPointerDow
           onKeyDown={(e) => e.key === 'Enter' && submitRename()}
           onBlur={submitRename} style={{ flex: 1, fontSize: '13px' }} />
       ) : (
-        <span style={{ flex: 1 }} onClick={() => !dragState.active && onFileClick(node.path)}>📄 {node.name}</span>
+        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} onClick={() => !dragState.active && onFileClick(node.path)}>📄 {node.name}</span>
       )}
       <span style={{ fontSize: '11px', cursor: 'pointer' }} onClick={startRename} title="Rename">✏️</span>
       <span style={{ fontSize: '11px', cursor: 'pointer' }} onClick={handleDelete} title="Delete">🗑️</span>
@@ -211,7 +211,7 @@ function FileExplorer({ onFileSelect }) {
         <span style={{ fontSize: '14px', cursor: 'pointer' }} onClick={loadTree} title="Refresh">🔄</span>
       </div>
       {status && <div style={{ color: '#f66', padding: '0 8px' }}>{status}</div>}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 8px 8px' }}>
+      <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '0 8px 8px 8px' }}>
         {tree.map((node) => (
           <TreeItem key={node.path} node={node} onFileClick={onFileSelect} onRefresh={loadTree}
             depth={0} dragState={dragState.current} onPointerDownItem={onPointerDownItem} hoverPath={hoverPath} />
