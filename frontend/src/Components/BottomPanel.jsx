@@ -6,7 +6,7 @@ let nextId = 1;
 export default function BottomPanel({ isMaximized, onToggleMaximize }) {
   const [tabs, setTabs] = useState([{ id: nextId, label: `Terminal ${nextId}` }]);
   const [activeId, setActiveId] = useState(tabs[0].id);
-  const [activeView, setActiveView] = useState('terminal'); // 'problems' | 'terminal'
+  const [activeView, setActiveView] = useState('terminal'); // 'problems' | 'output' | 'debug console' | 'terminal'
 
   const addTerminal = () => {
     nextId += 1;
@@ -30,7 +30,7 @@ export default function BottomPanel({ isMaximized, onToggleMaximize }) {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#1e1e1e' }}>
       {/* Top-level view tabs, VS Code style */}
       <div style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid #333', background: '#252526' }}>
-        {['Problems', 'Terminal'].map((label) => {
+        {['Problems', 'Output', 'Debug Console', 'Terminal'].map((label) => {
           const view = label.toLowerCase();
           const isActive = activeView === view;
           return (
@@ -43,6 +43,7 @@ export default function BottomPanel({ isMaximized, onToggleMaximize }) {
                 color: isActive ? '#fff' : '#969696',
                 borderBottom: isActive ? '2px solid #007acc' : '2px solid transparent',
                 cursor: 'pointer',
+                whiteSpace: 'nowrap',
               }}
             >
               {label}
@@ -67,8 +68,20 @@ export default function BottomPanel({ isMaximized, onToggleMaximize }) {
       </div>
 
       {activeView === 'problems' && (
-        <div style={{ padding: '10px', color: '#969696', fontSize: '12px' }}>
+        <div style={{ padding: '10px', color: '#969696', fontSize: '12px', overflowY: 'auto', flex: 1 }}>
           No problems detected. (Wire this to the AI code-quality analysis results later.)
+        </div>
+      )}
+
+      {activeView === 'output' && (
+        <div style={{ padding: '10px', color: '#969696', fontSize: '12px', overflowY: 'auto', flex: 1, fontFamily: 'monospace' }}>
+          No output yet. (Wire this to build/run logs later.)
+        </div>
+      )}
+
+      {activeView === 'debug console' && (
+        <div style={{ padding: '10px', color: '#969696', fontSize: '12px', overflowY: 'auto', flex: 1, fontFamily: 'monospace' }}>
+          No active debug session. (Wire this to debugger output later.)
         </div>
       )}
 
