@@ -152,6 +152,7 @@ function TreeItem({
 function FileExplorer({ onFileSelect, rootPath }) {
   const [tree, setTree] = useState([]);
   const [status, setStatus] = useState('Loading...');
+  const [loaded, setLoaded] = useState(false);
   const [hoverPath, setHoverPathState] = useState(null);
   const [contextMenu, setContextMenu] = useState(null); // { x, y, node }
   const [pendingAction, setPendingAction] = useState(null); // { path, type }
@@ -159,6 +160,8 @@ function FileExplorer({ onFileSelect, rootPath }) {
   const hoverPathRef = useRef(null);
   const dragState = useRef({ active: false, path: null, name: null, startX: 0, startY: 0 });
   const [, forceRender] = useState(0);
+
+  const folderName = rootPath.split(/[\\/]/).filter(Boolean).pop() || rootPath;
 
   const setHoverPath = (val) => {
     hoverPathRef.current = val;
@@ -168,8 +171,24 @@ function FileExplorer({ onFileSelect, rootPath }) {
   const loadTree = () => {
     fetch(`${BACKEND_URL}/api/workspace/tree?path=${encodeURIComponent(rootPath)}`)
       .then(res => res.json())
-      .then(data => { setTree(data); setStatus(''); })
-      .catch(err => setStatus('Failed to load: ' + err.message));
+      .then(data => {
+        if (Array.isArray(data)) {
+          setTree(data);
+          setStatus('');
+        } else {
+          // Backend answered with an error object instead of a list of files
+          setTree([]);
+          setStatus(
+            (data && data.error ? data.error : 'Could not read this folder') +
+            ' — the backend must be able to see this path on its own computer.'
+          );
+        }
+        setLoaded(true);
+      })
+      .catch(err => {
+        setStatus('Failed to load: ' + err.message);
+        setLoaded(true);
+      });
   };
 
   useEffect(() => { loadTree(); }, [rootPath]);
@@ -282,7 +301,19 @@ function FileExplorer({ onFileSelect, rootPath }) {
         <span style={{ color: '#bbb', fontSize: '11px', letterSpacing: '1px', fontWeight: 600 }}>EXPLORER</span>
         <span style={{ fontSize: '13px', cursor: 'pointer', color: '#bbb' }} onClick={loadTree} title="Refresh">⟳</span>
       </div>
-      {status && <div style={{ color: '#f66', padding: '0 12px', fontSize: '12px' }}>{status}</div>}
+
+      <div
+        title={rootPath}
+        style={{ padding: '2px 12px 6px 12px', color: '#e7e7e7', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+      >
+        ▾ {folderName}
+      </div>
+
+      {status && <div style={{ color: '#f66', padding: '0 12px 8px 12px', fontSize: '12px' }}>{status}</div>}
+      {loaded && !status && tree.length === 0 && (
+        <div style={{ color: '#888', padding: '0 12px', fontSize: '12px' }}>This folder is empty.</div>
+      )}
+
       <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', paddingBottom: '8px' }}>
         {tree.map((node) => (
           <TreeItem
