@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import Editor from '@monaco-editor/react';
 import FileExplorer from './FileExplorer';
 import SearchPanel from './SearchPanel';
@@ -61,6 +61,8 @@ function App() {
   const [status, setStatus] = useState('');
   const [isTerminalOpen, setIsTerminalOpen] = useState(false);
   const [isTerminalMaximized, setIsTerminalMaximized] = useState(false);
+  const [panelMounted, setPanelMounted] = useState(false); // panel is created on first open, then kept alive
+  const [panelView, setPanelView] = useState('terminal'); // 'problems' | 'output' | 'debug console' | 'terminal'
   const [showSettings, setShowSettings] = useState(false);
   const [editorTheme, setEditorTheme] = useState('vs-dark');
   const [fontSize, setFontSize] = useState(14);
@@ -68,6 +70,10 @@ function App() {
   const [showSaveAsModal, setShowSaveAsModal] = useState(false);
   const [saveAsPath, setSaveAsPath] = useState('');
   const [activeSidebar, setActiveSidebar] = useState('explorer');
+
+  const [markers, setMarkers] = useState([]); // Monaco diagnostics for the active file
+  const [logs, setLogs] = useState([]); // Output panel lines
+  const editorRef = useRef(null);
 
   const [workspacePath, setWorkspacePath] = useState(() => {
     try {
@@ -81,6 +87,56 @@ function App() {
   const [activeFile, setActiveFile] = useState(null);
 
   const activeTab = openFiles.find(f => f.path === activeFile);
+
+  // Output panel logging
+  const log = (text, level = 'info') => {
+    const time = new Date().toLocaleTimeString();
+    setLogs(prev => [...prev.slice(-499), { time, text, level }]);
+  };
+
+  // Problems: clear old diagnostics when switching tabs; Monaco re-reports for the new file
+  useEffect(() => {
+    setMarkers([]);
+  }, [activeFile]);
+
+  const problems = markers
+    .filter(m => m.severity >= 2) // skip hints
+    .map(m => ({
+      severity: m.severity,
+      message: m.message,
+      line: m.startLineNumber,
+      column: m.startColumn,
+      source: m.source,
+      code: typeof m.code === 'object' && m.code !== null ? m.code.value : m.code,
+      file: activeTab ? activeTab.name : '',
+    }))
+    .sort((a, b) => a.line - b.line);
+
+  const errorCount = problems.filter(p => p.severity === 8).length;
+  const warningCount = problems.filter(p => p.severity === 4).length;
+
+  const handleProblemClick = (p) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.revealLineInCenter(p.line);
+    editor.setPosition({ lineNumber: p.line, column: p.column });
+    editor.focus();
+  };
+
+  // Panel open / close
+  const openPanel = (view) => {
+    setPanelMounted(true);
+    setIsTerminalOpen(true);
+    if (view) setPanelView(view);
+  };
+
+  const togglePanel = () => {
+    if (isTerminalOpen) {
+      setIsTerminalOpen(false);
+    } else {
+      openPanel('terminal');
+    }
+  };
 
   const handleFileSelect = (filePath) => {
     const existing = openFiles.find(f => f.path === filePath);
@@ -103,8 +159,12 @@ function App() {
         setOpenFiles(prev => [...prev, newTab]);
         setActiveFile(filePath);
         setStatus('');
+        log(`Opened ${filePath}`);
       })
-      .catch(err => setStatus('Failed to load: ' + err.message));
+      .catch(err => {
+        setStatus('Failed to load: ' + err.message);
+        log(`Failed to open ${filePath}: ${err.message}`, 'error');
+      });
   };
 
   const handleOpenFile = async () => {
@@ -133,6 +193,7 @@ function App() {
       // ignore storage errors
     }
     setActiveSidebar('explorer');
+    log(`Opened folder ${folder}`);
   };
 
   const handleCodeChange = (value) => {
@@ -175,11 +236,14 @@ function App() {
           f.path === activeTab.path ? { ...f, isDirty: false } : f
         ));
         setStatus('');
+        log(`Saved ${activeTab.path}`);
       } else {
         setStatus('Save failed: ' + data.error);
+        log(`Save failed for ${activeTab.path}: ${data.error}`, 'error');
       }
     } catch (err) {
       setStatus('Save failed: ' + err.message);
+      log(`Save failed for ${activeTab.path}: ${err.message}`, 'error');
     }
   };
 
@@ -216,11 +280,14 @@ function App() {
         }
         setActiveFile(newPath);
         setStatus('');
+        log(`Saved as ${newPath}`);
       } else {
         setStatus('Save failed: ' + data.error);
+        log(`Save As failed for ${newPath}: ${data.error}`, 'error');
       }
     } catch (err) {
       setStatus('Save failed: ' + err.message);
+      log(`Save As failed for ${newPath}: ${err.message}`, 'error');
     }
   };
 
@@ -247,7 +314,7 @@ function App() {
   const handleKeyDown = (e) => {
     if (e.ctrlKey && e.key === '`') {
       e.preventDefault();
-      setIsTerminalOpen((prev) => !prev);
+      togglePanel();
     }
     if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 's') {
       e.preventDefault();
@@ -268,10 +335,7 @@ function App() {
     setIsTerminalMaximized((prev) => !prev);
   };
 
-  let terminalHeight = '25vh';
-  if (isTerminalOpen) {
-    terminalHeight = isTerminalMaximized ? '80vh' : '25vh';
-  }
+  const terminalHeight = isTerminalMaximized ? '80vh' : '25vh';
 
   return (
     <div
@@ -336,11 +400,21 @@ function App() {
           </div>
 
           <MenuItem label="Settings" active={showSettings} onClick={() => setShowSettings(true)} />
-          <MenuItem label="Terminal" active={isTerminalOpen} onClick={() => setIsTerminalOpen((prev) => !prev)} />
+          <MenuItem label="Terminal" active={isTerminalOpen && panelView === 'terminal'} onClick={togglePanel} />
 
           <h3 style={{ color: 'white', margin: '0 0 0 12px', fontSize: '15px' }}>AI-Powered IDE</h3>
 
-          <span style={{ color: '#f66', marginLeft: 'auto' }}>{status}</span>
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <span style={{ color: '#f66', fontSize: '13px' }}>{status}</span>
+            <span
+              onClick={() => openPanel('problems')}
+              title="Show Problems"
+              style={{ display: 'flex', gap: '10px', color: '#ccc', fontSize: '12px', cursor: 'pointer' }}
+            >
+              <span>⊗ {errorCount}</span>
+              <span>⚠ {warningCount}</span>
+            </span>
+          </div>
         </div>
 
         {openFiles.length > 0 && (
@@ -389,6 +463,8 @@ function App() {
                 language={activeTab.language}
                 value={activeTab.content}
                 onChange={handleCodeChange}
+                onMount={(editor) => { editorRef.current = editor; }}
+                onValidate={setMarkers}
                 theme={editorTheme}
                 options={{ fontSize: fontSize }}
               />
@@ -399,11 +475,25 @@ function App() {
             )}
           </div>
 
-          {isTerminalOpen && (
-            <div style={{ height: terminalHeight, borderTop: '2px solid #333', width: '100%', flexShrink: 0 }}>
+          {panelMounted && (
+            <div
+              style={{
+                display: isTerminalOpen ? 'block' : 'none',
+                height: terminalHeight,
+                borderTop: '2px solid #333',
+                width: '100%',
+                flexShrink: 0,
+              }}
+            >
               <BottomPanel
                 isMaximized={isTerminalMaximized}
                 onToggleMaximize={toggleMaximize}
+                activeView={panelView}
+                onViewChange={setPanelView}
+                problems={problems}
+                onProblemClick={handleProblemClick}
+                logs={logs}
+                onClearLogs={() => setLogs([])}
               />
             </div>
           )}
