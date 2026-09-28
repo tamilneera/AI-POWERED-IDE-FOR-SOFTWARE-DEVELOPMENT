@@ -2,9 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { Terminal as XTerm } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import 'xterm/css/xterm.css';
-
-// Point this at your backend's actual host/port.
-const WS_URL = 'ws://10.231.208.94:5000/terminal';
+import { WS_URL } from '../config';
 
 export default function Terminal() {
   const containerRef = useRef(null);
@@ -29,21 +27,17 @@ export default function Terminal() {
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
 
-    // Safe fit: only fit if the container actually has a real size.
-    // Prevents the "Cannot read properties of undefined (reading 'dimensions')"
-    // crash that happens when fit() runs on a 0x0 or just-mounted container.
+    // Only fit when the container has a real size, to avoid xterm crashing on a 0x0 container
     const safeFit = () => {
       const el = containerRef.current;
       if (!el || el.offsetWidth === 0 || el.offsetHeight === 0) return;
       try {
         fitAddon.fit();
       } catch (err) {
-        // xterm can still throw in rare timing edge cases; never let it crash the app
         console.warn('Terminal fit skipped:', err);
       }
     };
 
-    // Defer the first fit to the next animation frame so layout has settled
     requestAnimationFrame(safeFit);
 
     const socket = new WebSocket(WS_URL);
@@ -95,9 +89,7 @@ export default function Terminal() {
       }
     });
 
-    // Re-fit whenever the container's actual size changes — this covers
-    // window resizes AND the terminal panel being shown/hidden via toggle,
-    // which a plain window "resize" listener would miss entirely.
+    // Re-fit whenever the container's size changes (window resize or the panel being toggled)
     const resizeObserver = new ResizeObserver(() => {
       safeFit();
     });
