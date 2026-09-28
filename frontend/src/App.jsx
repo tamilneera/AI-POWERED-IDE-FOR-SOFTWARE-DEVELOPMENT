@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import Editor from '@monaco-editor/react';
 import FileExplorer from './FileExplorer';
+import SearchPanel from './SearchPanel';
 import BottomPanel from './Components/BottomPanel';
 import Settings from './Components/Settings';
+import { BACKEND_URL } from './config';
 
-const BACKEND_URL = 'http://10.150.71.94:5000';
+const DEFAULT_WORKSPACE = 'C:/Users/ANAND/Projects/AI-POWERED-IDE-FOR-SOFTWARE-DEVELOPMENT';
 
 function MenuItem({ label, active, onClick }) {
   return (
@@ -23,6 +25,20 @@ function MenuItem({ label, active, onClick }) {
     >
       {label}
     </span>
+  );
+}
+
+function DropdownItem({ label, shortcut, onClick }) {
+  return (
+    <div
+      onClick={onClick}
+      style={{ display: 'flex', justifyContent: 'space-between', gap: '24px', padding: '8px 14px', color: '#ccc', cursor: 'pointer', fontSize: '13px' }}
+      onMouseEnter={(e) => (e.currentTarget.style.background = '#094771')}
+      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+    >
+      <span>{label}</span>
+      <span style={{ color: '#888' }}>{shortcut}</span>
+    </div>
   );
 }
 
@@ -51,10 +67,18 @@ function App() {
   const [showFileMenu, setShowFileMenu] = useState(false);
   const [showSaveAsModal, setShowSaveAsModal] = useState(false);
   const [saveAsPath, setSaveAsPath] = useState('');
+  const [activeSidebar, setActiveSidebar] = useState('explorer');
 
-  // Tabs: array of { path, name, content, language, isDirty }
+  const [workspacePath, setWorkspacePath] = useState(() => {
+    try {
+      return localStorage.getItem('workspacePath') || DEFAULT_WORKSPACE;
+    } catch {
+      return DEFAULT_WORKSPACE;
+    }
+  });
+
   const [openFiles, setOpenFiles] = useState([]);
-  const [activeFile, setActiveFile] = useState(null); // path of the active tab
+  const [activeFile, setActiveFile] = useState(null);
 
   const activeTab = openFiles.find(f => f.path === activeFile);
 
@@ -81,6 +105,34 @@ function App() {
         setStatus('');
       })
       .catch(err => setStatus('Failed to load: ' + err.message));
+  };
+
+  const handleOpenFile = async () => {
+    if (!window.electronAPI) {
+      setStatus('Open File works only in the desktop app');
+      return;
+    }
+    const filePath = await window.electronAPI.openFileDialog();
+    if (filePath) handleFileSelect(filePath);
+  };
+
+  const handleOpenFolder = async () => {
+    if (!window.electronAPI) {
+      setStatus('Open Folder works only in the desktop app');
+      return;
+    }
+    const folder = await window.electronAPI.openFolderDialog();
+    if (!folder) return;
+    if (openFiles.some(f => f.isDirty) && !window.confirm('You have unsaved changes. Open another folder anyway?')) return;
+    setOpenFiles([]);
+    setActiveFile(null);
+    setWorkspacePath(folder);
+    try {
+      localStorage.setItem('workspacePath', folder);
+    } catch {
+      // ignore storage errors
+    }
+    setActiveSidebar('explorer');
   };
 
   const handleCodeChange = (value) => {
@@ -131,19 +183,8 @@ function App() {
     }
   };
 
-  const openSaveAsModal = () => {
-    if (!activeTab) {
-      setStatus('No file selected');
-      return;
-    }
-    setSaveAsPath(activeTab.path);
-    setShowSaveAsModal(true);
-  };
-
-  const submitSaveAs = async () => {
-    const newPath = saveAsPath.trim();
-    setShowSaveAsModal(false);
-    if (!newPath || !activeTab) return;
+  const saveToPath = async (newPath) => {
+    if (!activeTab) return;
 
     if (newPath === activeTab.path) {
       handleSave();
@@ -183,14 +224,43 @@ function App() {
     }
   };
 
+  const handleSaveAs = async () => {
+    if (!activeTab) {
+      setStatus('No file selected');
+      return;
+    }
+    if (window.electronAPI) {
+      const chosen = await window.electronAPI.saveFileDialog(activeTab.path);
+      if (chosen) saveToPath(chosen);
+    } else {
+      setSaveAsPath(activeTab.path);
+      setShowSaveAsModal(true);
+    }
+  };
+
+  const submitSaveAs = () => {
+    const newPath = saveAsPath.trim();
+    setShowSaveAsModal(false);
+    if (newPath) saveToPath(newPath);
+  };
+
   const handleKeyDown = (e) => {
     if (e.ctrlKey && e.key === '`') {
       e.preventDefault();
       setIsTerminalOpen((prev) => !prev);
     }
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      handleSaveAs();
+      return;
+    }
     if (e.ctrlKey && e.key === 's') {
       e.preventDefault();
       handleSave();
+    }
+    if (e.ctrlKey && e.key === 'o') {
+      e.preventDefault();
+      handleOpenFile();
     }
   };
 
@@ -209,10 +279,41 @@ function App() {
       tabIndex={0}
       onKeyDown={handleKeyDown}
     >
-      <FileExplorer onFileSelect={handleFileSelect} />
+      <div style={{ display: 'flex', height: '100%' }}>
+        <div style={{ width: '44px', flexShrink: 0, background: '#333333', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: '8px', gap: '4px' }}>
+          <div
+            onClick={() => setActiveSidebar('explorer')}
+            title="Explorer"
+            style={{
+              fontSize: '20px', cursor: 'pointer', padding: '8px',
+              borderLeft: activeSidebar === 'explorer' ? '2px solid #fff' : '2px solid transparent',
+              opacity: activeSidebar === 'explorer' ? 1 : 0.6,
+            }}
+          >
+            📁
+          </div>
+          <div
+            onClick={() => setActiveSidebar('search')}
+            title="Search"
+            style={{
+              fontSize: '20px', cursor: 'pointer', padding: '8px',
+              borderLeft: activeSidebar === 'search' ? '2px solid #fff' : '2px solid transparent',
+              opacity: activeSidebar === 'search' ? 1 : 0.6,
+            }}
+          >
+            🔍
+          </div>
+        </div>
+
+        {activeSidebar === 'explorer' ? (
+          <FileExplorer key={workspacePath} onFileSelect={handleFileSelect} rootPath={workspacePath} />
+        ) : (
+          <SearchPanel onFileClick={handleFileSelect} rootPath={workspacePath} />
+        )}
+      </div>
+
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, background: '#1e1e1e' }}>
 
-        {/* Menu row: File / Settings / Terminal */}
         <div style={{ background: '#1e1e1e', padding: '8px', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative', borderBottom: '1px solid #333' }}>
           <div style={{ position: 'relative' }}>
             <MenuItem label="File" active={showFileMenu} onClick={() => setShowFileMenu((prev) => !prev)} />
@@ -221,25 +322,14 @@ function App() {
                 <div onClick={() => setShowFileMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
                 <div style={{
                   position: 'absolute', top: '100%', left: 0, marginTop: '4px',
-                  background: '#252526', border: '1px solid #444', borderRadius: '4px',
-                  zIndex: 100, minWidth: '150px', boxShadow: '0 4px 10px rgba(0,0,0,0.4)'
+                  background: '#252526', border: '1px solid #454545', borderRadius: '4px',
+                  zIndex: 100, minWidth: '220px', padding: '4px 0', boxShadow: '0 4px 10px rgba(0,0,0,0.4)'
                 }}>
-                  <div
-                    onClick={() => { handleSave(); setShowFileMenu(false); }}
-                    style={{ padding: '8px 14px', color: '#ccc', cursor: 'pointer' }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = '#333')}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                  >
-                    Save
-                  </div>
-                  <div
-                    onClick={() => { openSaveAsModal(); setShowFileMenu(false); }}
-                    style={{ padding: '8px 14px', color: '#ccc', cursor: 'pointer' }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = '#333')}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                  >
-                    Save As
-                  </div>
+                  <DropdownItem label="Open File..." shortcut="Ctrl+O" onClick={() => { setShowFileMenu(false); handleOpenFile(); }} />
+                  <DropdownItem label="Open Folder..." shortcut="" onClick={() => { setShowFileMenu(false); handleOpenFolder(); }} />
+                  <div style={{ borderTop: '1px solid #454545', margin: '4px 0' }} />
+                  <DropdownItem label="Save" shortcut="Ctrl+S" onClick={() => { setShowFileMenu(false); handleSave(); }} />
+                  <DropdownItem label="Save As..." shortcut="Ctrl+Shift+S" onClick={() => { setShowFileMenu(false); handleSaveAs(); }} />
                 </div>
               </>
             )}
@@ -253,7 +343,6 @@ function App() {
           <span style={{ color: '#f66', marginLeft: 'auto' }}>{status}</span>
         </div>
 
-        {/* Tab bar */}
         {openFiles.length > 0 && (
           <div style={{ display: 'flex', background: '#252526', borderBottom: '1px solid #333', overflowX: 'auto', flexShrink: 0 }}>
             {openFiles.map((f) => (
@@ -272,7 +361,14 @@ function App() {
                   whiteSpace: 'nowrap',
                 }}
               >
-                <span>{f.name}{f.isDirty ? ' •' : ''}</span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  {f.name}
+                  {f.isDirty && (
+                    <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#e2c08d', minWidth: '14px', textAlign: 'center' }}>
+                      M
+                    </span>
+                  )}
+                </span>
                 <span
                   onClick={(e) => handleCloseTab(e, f.path)}
                   style={{ fontSize: '11px', cursor: 'pointer', color: '#888' }}
@@ -285,7 +381,6 @@ function App() {
           </div>
         )}
 
-        {/* Editor */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           <div style={{ flex: 1, minHeight: 0 }}>
             {activeTab ? (
@@ -299,7 +394,7 @@ function App() {
               />
             ) : (
               <div style={{ color: '#666', padding: '20px', fontSize: '14px' }}>
-                No file open — select one from the Explorer.
+                No file open — select one from the Explorer, or use File → Open File / Open Folder.
               </div>
             )}
           </div>
