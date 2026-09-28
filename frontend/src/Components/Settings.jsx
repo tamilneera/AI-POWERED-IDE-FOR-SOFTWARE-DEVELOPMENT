@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-
-const BACKEND_URL = 'http://10.150.71.94:5000';
+import { BACKEND_URL } from '../config';
 
 function Settings({ onClose, onApply }) {
   const [theme, setTheme] = useState('dark');
