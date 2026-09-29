@@ -51,18 +51,41 @@ router.get('/watch', (req, res) => {
   if (!targetPath) {
     return res.status(400).json({ error: 'path query parameter is required' });
   }
+  if (!fs.existsSync(targetPath)) {
+    return res.status(404).json({ error: 'Folder not found: ' + targetPath });
+  }
 
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders();
-
-  const watcher = fs.watch(targetPath, { recursive: true }, (eventType, filename) => {
-    res.write(`data: ${JSON.stringify({ eventType, filename })}\n\n`);
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
   });
+  res.write('data: connected\n\n');
+
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let watcher: fs.FSWatcher | null = null;
+
+  try {
+    watcher = fs.watch(targetPath, { recursive: true }, (_event, filename) => {
+      if (filename && /(^|[\\/])(node_modules|\.git)([\\/]|$)/.test(filename.toString())) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => res.write('data: changed\n\n'), 300);
+    });
+    watcher.on('error', () => {
+      watcher?.close();
+      res.end();
+    });
+  } catch {
+    res.end();
+    return;
+  }
+
+  const heartbeat = setInterval(() => res.write(': ping\n\n'), 30000);
 
   req.on('close', () => {
-    watcher.close();
+    clearInterval(heartbeat);
+    if (timer) clearTimeout(timer);
+    watcher?.close();
   });
 });
 
