@@ -2,11 +2,12 @@ import { useState, useRef, useEffect } from 'react';
 import Editor from '@monaco-editor/react';
 import FileExplorer from './FileExplorer';
 import SearchPanel from './SearchPanel';
+import WelcomeScreen from './WelcomeScreen';
 import BottomPanel from './Components/BottomPanel';
 import Settings from './Components/Settings';
 import { BACKEND_URL } from './config';
 
-const DEFAULT_WORKSPACE = 'C:/Users/ANAND/Projects/AI-POWERED-IDE-FOR-SOFTWARE-DEVELOPMENT';
+const DEFAULT_WORKSPACE = '';
 
 function MenuItem({ label, active, onClick }) {
   return (
@@ -61,8 +62,8 @@ function App() {
   const [status, setStatus] = useState('');
   const [isTerminalOpen, setIsTerminalOpen] = useState(false);
   const [isTerminalMaximized, setIsTerminalMaximized] = useState(false);
-  const [panelMounted, setPanelMounted] = useState(false); // panel is created on first open, then kept alive
-  const [panelView, setPanelView] = useState('terminal'); // 'problems' | 'output' | 'debug console' | 'terminal'
+  const [panelMounted, setPanelMounted] = useState(false);
+  const [panelView, setPanelView] = useState('terminal');
   const [showSettings, setShowSettings] = useState(false);
   const [editorTheme, setEditorTheme] = useState('vs-dark');
   const [fontSize, setFontSize] = useState(14);
@@ -71,8 +72,8 @@ function App() {
   const [saveAsPath, setSaveAsPath] = useState('');
   const [activeSidebar, setActiveSidebar] = useState('explorer');
 
-  const [markers, setMarkers] = useState([]); // Monaco diagnostics for the active file
-  const [logs, setLogs] = useState([]); // Output panel lines
+  const [markers, setMarkers] = useState([]);
+  const [logs, setLogs] = useState([]);
   const editorRef = useRef(null);
 
   const [workspacePath, setWorkspacePath] = useState(() => {
@@ -88,19 +89,17 @@ function App() {
 
   const activeTab = openFiles.find(f => f.path === activeFile);
 
-  // Output panel logging
   const log = (text, level = 'info') => {
     const time = new Date().toLocaleTimeString();
     setLogs(prev => [...prev.slice(-499), { time, text, level }]);
   };
 
-  // Problems: clear old diagnostics when switching tabs; Monaco re-reports for the new file
   useEffect(() => {
     setMarkers([]);
   }, [activeFile]);
 
   const problems = markers
-    .filter(m => m.severity >= 2) // skip hints
+    .filter(m => m.severity >= 2)
     .map(m => ({
       severity: m.severity,
       message: m.message,
@@ -123,7 +122,6 @@ function App() {
     editor.focus();
   };
 
-  // Panel open / close
   const openPanel = (view) => {
     setPanelMounted(true);
     setIsTerminalOpen(true);
@@ -176,6 +174,23 @@ function App() {
     if (filePath) handleFileSelect(filePath);
   };
 
+  const openFolderPath = (folder) => {
+    if (openFiles.some(f => f.isDirty) && !window.confirm('You have unsaved changes. Open another folder anyway?')) return;
+    setOpenFiles([]);
+    setActiveFile(null);
+    setWorkspacePath(folder);
+    try {
+      localStorage.setItem('workspacePath', folder);
+      const recent = JSON.parse(localStorage.getItem('recentFolders') || '[]');
+      const next = [folder, ...recent.filter(p => p !== folder)].slice(0, 8);
+      localStorage.setItem('recentFolders', JSON.stringify(next));
+    } catch {
+      // ignore storage errors
+    }
+    setActiveSidebar('explorer');
+    log(`Opened folder ${folder}`);
+  };
+
   const handleOpenFolder = async () => {
     if (!window.electronAPI) {
       setStatus('Open Folder works only in the desktop app');
@@ -183,17 +198,19 @@ function App() {
     }
     const folder = await window.electronAPI.openFolderDialog();
     if (!folder) return;
-    if (openFiles.some(f => f.isDirty) && !window.confirm('You have unsaved changes. Open another folder anyway?')) return;
+    openFolderPath(folder);
+  };
+
+  const handleCloseFolder = () => {
+    if (openFiles.some(f => f.isDirty) && !window.confirm('You have unsaved changes. Close the folder anyway?')) return;
     setOpenFiles([]);
     setActiveFile(null);
-    setWorkspacePath(folder);
+    setWorkspacePath('');
     try {
-      localStorage.setItem('workspacePath', folder);
+      localStorage.removeItem('workspacePath');
     } catch {
-      // ignore storage errors
+      // ignore
     }
-    setActiveSidebar('explorer');
-    log(`Opened folder ${folder}`);
   };
 
   const handleCodeChange = (value) => {
@@ -343,162 +360,170 @@ function App() {
       tabIndex={0}
       onKeyDown={handleKeyDown}
     >
-      <div style={{ display: 'flex', height: '100%' }}>
-        <div style={{ width: '44px', flexShrink: 0, background: '#333333', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: '8px', gap: '4px' }}>
-          <div
-            onClick={() => setActiveSidebar('explorer')}
-            title="Explorer"
-            style={{
-              fontSize: '20px', cursor: 'pointer', padding: '8px',
-              borderLeft: activeSidebar === 'explorer' ? '2px solid #fff' : '2px solid transparent',
-              opacity: activeSidebar === 'explorer' ? 1 : 0.6,
-            }}
-          >
-            📁
-          </div>
-          <div
-            onClick={() => setActiveSidebar('search')}
-            title="Search"
-            style={{
-              fontSize: '20px', cursor: 'pointer', padding: '8px',
-              borderLeft: activeSidebar === 'search' ? '2px solid #fff' : '2px solid transparent',
-              opacity: activeSidebar === 'search' ? 1 : 0.6,
-            }}
-          >
-            🔍
-          </div>
-        </div>
-
-        {activeSidebar === 'explorer' ? (
-          <FileExplorer key={workspacePath} onFileSelect={handleFileSelect} rootPath={workspacePath} />
-        ) : (
-          <SearchPanel onFileClick={handleFileSelect} rootPath={workspacePath} />
-        )}
-      </div>
-
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, background: '#1e1e1e' }}>
-
-        <div style={{ background: '#1e1e1e', padding: '8px', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative', borderBottom: '1px solid #333' }}>
-          <div style={{ position: 'relative' }}>
-            <MenuItem label="File" active={showFileMenu} onClick={() => setShowFileMenu((prev) => !prev)} />
-            {showFileMenu && (
-              <>
-                <div onClick={() => setShowFileMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
-                <div style={{
-                  position: 'absolute', top: '100%', left: 0, marginTop: '4px',
-                  background: '#252526', border: '1px solid #454545', borderRadius: '4px',
-                  zIndex: 100, minWidth: '220px', padding: '4px 0', boxShadow: '0 4px 10px rgba(0,0,0,0.4)'
-                }}>
-                  <DropdownItem label="Open File..." shortcut="Ctrl+O" onClick={() => { setShowFileMenu(false); handleOpenFile(); }} />
-                  <DropdownItem label="Open Folder..." shortcut="" onClick={() => { setShowFileMenu(false); handleOpenFolder(); }} />
-                  <div style={{ borderTop: '1px solid #454545', margin: '4px 0' }} />
-                  <DropdownItem label="Save" shortcut="Ctrl+S" onClick={() => { setShowFileMenu(false); handleSave(); }} />
-                  <DropdownItem label="Save As..." shortcut="Ctrl+Shift+S" onClick={() => { setShowFileMenu(false); handleSaveAs(); }} />
-                </div>
-              </>
-            )}
-          </div>
-
-          <MenuItem label="Settings" active={showSettings} onClick={() => setShowSettings(true)} />
-          <MenuItem label="Terminal" active={isTerminalOpen && panelView === 'terminal'} onClick={togglePanel} />
-
-          <h3 style={{ color: 'white', margin: '0 0 0 12px', fontSize: '15px' }}>AI-Powered IDE</h3>
-
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <span style={{ color: '#f66', fontSize: '13px' }}>{status}</span>
-            <span
-              onClick={() => openPanel('problems')}
-              title="Show Problems"
-              style={{ display: 'flex', gap: '10px', color: '#ccc', fontSize: '12px', cursor: 'pointer' }}
-            >
-              <span>⊗ {errorCount}</span>
-              <span>⚠ {warningCount}</span>
-            </span>
-          </div>
-        </div>
-
-        {openFiles.length > 0 && (
-          <div style={{ display: 'flex', background: '#252526', borderBottom: '1px solid #333', overflowX: 'auto', flexShrink: 0 }}>
-            {openFiles.map((f) => (
+      {!workspacePath ? (
+        <WelcomeScreen onOpenFolder={handleOpenFolder} onOpenRecent={openFolderPath} onOpenFile={handleOpenFile} />
+      ) : (
+        <>
+          <div style={{ display: 'flex', height: '100%' }}>
+            <div style={{ width: '44px', flexShrink: 0, background: '#333333', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: '8px', gap: '4px' }}>
               <div
-                key={f.path}
-                onClick={() => setActiveFile(f.path)}
-                title={f.path}
+                onClick={() => setActiveSidebar('explorer')}
+                title="Explorer"
                 style={{
-                  display: 'flex', alignItems: 'center', gap: '8px',
-                  padding: '8px 10px', cursor: 'pointer',
-                  background: activeFile === f.path ? '#1e1e1e' : 'transparent',
-                  borderRight: '1px solid #333',
-                  borderTop: activeFile === f.path ? '2px solid #007acc' : '2px solid transparent',
-                  color: activeFile === f.path ? '#fff' : '#999',
-                  fontSize: '13px',
-                  whiteSpace: 'nowrap',
+                  fontSize: '20px', cursor: 'pointer', padding: '8px',
+                  borderLeft: activeSidebar === 'explorer' ? '2px solid #fff' : '2px solid transparent',
+                  opacity: activeSidebar === 'explorer' ? 1 : 0.6,
                 }}
               >
-                <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  {f.name}
-                  {f.isDirty && (
-                    <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#e2c08d', minWidth: '14px', textAlign: 'center' }}>
-                      M
-                    </span>
-                  )}
-                </span>
-                <span
-                  onClick={(e) => handleCloseTab(e, f.path)}
-                  style={{ fontSize: '11px', cursor: 'pointer', color: '#888' }}
-                  title="Close"
-                >
-                  ✕
-                </span>
+                📁
               </div>
-            ))}
-          </div>
-        )}
+              <div
+                onClick={() => setActiveSidebar('search')}
+                title="Search"
+                style={{
+                  fontSize: '20px', cursor: 'pointer', padding: '8px',
+                  borderLeft: activeSidebar === 'search' ? '2px solid #fff' : '2px solid transparent',
+                  opacity: activeSidebar === 'search' ? 1 : 0.6,
+                }}
+              >
+                🔍
+              </div>
+            </div>
 
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <div style={{ flex: 1, minHeight: 0 }}>
-            {activeTab ? (
-              <Editor
-                height="100%"
-                language={activeTab.language}
-                value={activeTab.content}
-                onChange={handleCodeChange}
-                onMount={(editor) => { editorRef.current = editor; }}
-                onValidate={setMarkers}
-                theme={editorTheme}
-                options={{ fontSize: fontSize }}
-              />
+            {activeSidebar === 'explorer' ? (
+              <FileExplorer key={workspacePath} onFileSelect={handleFileSelect} rootPath={workspacePath} />
             ) : (
-              <div style={{ color: '#666', padding: '20px', fontSize: '14px' }}>
-                No file open — select one from the Explorer, or use File → Open File / Open Folder.
-              </div>
+              <SearchPanel onFileClick={handleFileSelect} rootPath={workspacePath} />
             )}
           </div>
 
-          {panelMounted && (
-            <div
-              style={{
-                display: isTerminalOpen ? 'block' : 'none',
-                height: terminalHeight,
-                borderTop: '2px solid #333',
-                width: '100%',
-                flexShrink: 0,
-              }}
-            >
-              <BottomPanel
-                isMaximized={isTerminalMaximized}
-                onToggleMaximize={toggleMaximize}
-                activeView={panelView}
-                onViewChange={setPanelView}
-                problems={problems}
-                onProblemClick={handleProblemClick}
-                logs={logs}
-                onClearLogs={() => setLogs([])}
-              />
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, background: '#1e1e1e' }}>
+
+            <div style={{ background: '#1e1e1e', padding: '8px', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative', borderBottom: '1px solid #333' }}>
+              <div style={{ position: 'relative' }}>
+                <MenuItem label="File" active={showFileMenu} onClick={() => setShowFileMenu((prev) => !prev)} />
+                {showFileMenu && (
+                  <>
+                    <div onClick={() => setShowFileMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
+                    <div style={{
+                      position: 'absolute', top: '100%', left: 0, marginTop: '4px',
+                      background: '#252526', border: '1px solid #454545', borderRadius: '4px',
+                      zIndex: 100, minWidth: '220px', padding: '4px 0', boxShadow: '0 4px 10px rgba(0,0,0,0.4)'
+                    }}>
+                      <DropdownItem label="Open File..." shortcut="Ctrl+O" onClick={() => { setShowFileMenu(false); handleOpenFile(); }} />
+                      <DropdownItem label="Open Folder..." shortcut="" onClick={() => { setShowFileMenu(false); handleOpenFolder(); }} />
+                      <div style={{ borderTop: '1px solid #454545', margin: '4px 0' }} />
+                      <DropdownItem label="Save" shortcut="Ctrl+S" onClick={() => { setShowFileMenu(false); handleSave(); }} />
+                      <DropdownItem label="Save As..." shortcut="Ctrl+Shift+S" onClick={() => { setShowFileMenu(false); handleSaveAs(); }} />
+                      <div style={{ borderTop: '1px solid #454545', margin: '4px 0' }} />
+                      <DropdownItem label="Close Folder" shortcut="" onClick={() => { setShowFileMenu(false); handleCloseFolder(); }} />
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <MenuItem label="Settings" active={showSettings} onClick={() => setShowSettings(true)} />
+              <MenuItem label="Terminal" active={isTerminalOpen && panelView === 'terminal'} onClick={togglePanel} />
+
+              <h3 style={{ color: 'white', margin: '0 0 0 12px', fontSize: '15px' }}>AI-Powered IDE</h3>
+
+              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <span style={{ color: '#f66', fontSize: '13px' }}>{status}</span>
+                <span
+                  onClick={() => openPanel('problems')}
+                  title="Show Problems"
+                  style={{ display: 'flex', gap: '10px', color: '#ccc', fontSize: '12px', cursor: 'pointer' }}
+                >
+                  <span>⊗ {errorCount}</span>
+                  <span>⚠ {warningCount}</span>
+                </span>
+              </div>
             </div>
-          )}
-        </div>
-      </div>
+
+            {openFiles.length > 0 && (
+              <div style={{ display: 'flex', background: '#252526', borderBottom: '1px solid #333', overflowX: 'auto', flexShrink: 0 }}>
+                {openFiles.map((f) => (
+                  <div
+                    key={f.path}
+                    onClick={() => setActiveFile(f.path)}
+                    title={f.path}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '8px',
+                      padding: '8px 10px', cursor: 'pointer',
+                      background: activeFile === f.path ? '#1e1e1e' : 'transparent',
+                      borderRight: '1px solid #333',
+                      borderTop: activeFile === f.path ? '2px solid #007acc' : '2px solid transparent',
+                      color: activeFile === f.path ? '#fff' : '#999',
+                      fontSize: '13px',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      {f.name}
+                      {f.isDirty && (
+                        <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#e2c08d', minWidth: '14px', textAlign: 'center' }}>
+                          M
+                        </span>
+                      )}
+                    </span>
+                    <span
+                      onClick={(e) => handleCloseTab(e, f.path)}
+                      style={{ fontSize: '11px', cursor: 'pointer', color: '#888' }}
+                      title="Close"
+                    >
+                      ✕
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+              <div style={{ flex: 1, minHeight: 0 }}>
+                {activeTab ? (
+                  <Editor
+                    height="100%"
+                    language={activeTab.language}
+                    value={activeTab.content}
+                    onChange={handleCodeChange}
+                    onMount={(editor) => { editorRef.current = editor; }}
+                    onValidate={setMarkers}
+                    theme={editorTheme}
+                    options={{ fontSize: fontSize }}
+                  />
+                ) : (
+                  <div style={{ color: '#666', padding: '20px', fontSize: '14px' }}>
+                    No file open — select one from the Explorer, or use File → Open File / Open Folder.
+                  </div>
+                )}
+              </div>
+
+              {panelMounted && (
+                <div
+                  style={{
+                    display: isTerminalOpen ? 'block' : 'none',
+                    height: terminalHeight,
+                    borderTop: '2px solid #333',
+                    width: '100%',
+                    flexShrink: 0,
+                  }}
+                >
+                  <BottomPanel
+                    isMaximized={isTerminalMaximized}
+                    onToggleMaximize={toggleMaximize}
+                    activeView={panelView}
+                    onViewChange={setPanelView}
+                    problems={problems}
+                    onProblemClick={handleProblemClick}
+                    logs={logs}
+                    onClearLogs={() => setLogs([])}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
 
       {showSaveAsModal && (
         <div style={{
