@@ -2,11 +2,12 @@ import { useState, useRef, useEffect } from 'react';
 import Editor from '@monaco-editor/react';
 import FileExplorer from './FileExplorer';
 import SearchPanel from './SearchPanel';
+import WelcomeScreen from './WelcomeScreen';
 import BottomPanel from './Components/BottomPanel';
 import Settings from './Components/Settings';
 import { BACKEND_URL } from './config';
 
-const DEFAULT_WORKSPACE = 'C:/Users/ANAND/Projects/AI-POWERED-IDE-FOR-SOFTWARE-DEVELOPMENT';
+const DEFAULT_WORKSPACE = '';
 
 function MenuItem({ label, active, onClick }) {
   return (
@@ -57,6 +58,23 @@ function getFileName(filePath) {
   return filePath.split(/[\\/]/).pop();
 }
 
+const DEFAULT_SHORTCUTS = {
+  save: 'Ctrl+S',
+  saveAs: 'Ctrl+Shift+S',
+  openFile: 'Ctrl+O',
+  toggleTerminal: 'Ctrl+`',
+};
+
+function matchesShortcut(e, combo) {
+  if (!combo) return false;
+  const parts = combo.toLowerCase().split('+').map(p => p.trim());
+  const key = parts[parts.length - 1];
+  const ctrl = parts.includes('ctrl');
+  const shift = parts.includes('shift');
+  const alt = parts.includes('alt');
+  return e.ctrlKey === ctrl && e.shiftKey === shift && e.altKey === alt && e.key.toLowerCase() === key;
+}
+
 function App() {
   const [status, setStatus] = useState('');
   const [isTerminalOpen, setIsTerminalOpen] = useState(false);
@@ -70,6 +88,9 @@ function App() {
   const [showSaveAsModal, setShowSaveAsModal] = useState(false);
   const [saveAsPath, setSaveAsPath] = useState('');
   const [activeSidebar, setActiveSidebar] = useState('explorer');
+  const [showAccountMenu, setShowAccountMenu] = useState(false);
+  const [shortcuts, setShortcuts] = useState(DEFAULT_SHORTCUTS);
+  const [editorPrefs, setEditorPrefs] = useState({ wordWrap: false, tabSize: 2, minimap: true });
 
   const [markers, setMarkers] = useState([]);
   const [logs, setLogs] = useState([]);
@@ -86,6 +107,14 @@ function App() {
   const [openFiles, setOpenFiles] = useState([]);
   const [activeFile, setActiveFile] = useState(null);
 
+  const [user, setUser] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('user') || 'null');
+    } catch {
+      return null;
+    }
+  });
+
   const activeTab = openFiles.find(f => f.path === activeFile);
 
   const log = (text, level = 'info') => {
@@ -96,6 +125,29 @@ function App() {
   useEffect(() => {
     setMarkers([]);
   }, [activeFile]);
+
+  useEffect(() => {
+    fetch(`${BACKEND_URL}/api/settings`)
+      .then(res => res.json())
+      .then(data => {
+        setEditorTheme(data.theme === 'light' ? 'vs' : 'vs-dark');
+        setFontSize(data.font_size || 14);
+        setEditorPrefs({
+          wordWrap: !!data.word_wrap,
+          tabSize: data.tab_size || 2,
+          minimap: data.minimap === undefined ? true : !!data.minimap,
+        });
+        try {
+          const parsed = JSON.parse(data.shortcuts_json || '{}');
+          setShortcuts({ ...DEFAULT_SHORTCUTS, ...parsed });
+        } catch {
+          // keep defaults
+        }
+      })
+      .catch(() => {
+        // non-fatal — just keep built-in defaults
+      });
+  }, []);
 
   const problems = markers
     .filter(m => m.severity >= 2)
@@ -173,6 +225,23 @@ function App() {
     if (filePath) handleFileSelect(filePath);
   };
 
+  const openFolderPath = (folder) => {
+    if (openFiles.some(f => f.isDirty) && !window.confirm('You have unsaved changes. Open another folder anyway?')) return;
+    setOpenFiles([]);
+    setActiveFile(null);
+    setWorkspacePath(folder);
+    try {
+      localStorage.setItem('workspacePath', folder);
+      const recent = JSON.parse(localStorage.getItem('recentFolders') || '[]');
+      const next = [folder, ...recent.filter(p => p !== folder)].slice(0, 8);
+      localStorage.setItem('recentFolders', JSON.stringify(next));
+    } catch {
+      // ignore storage errors
+    }
+    setActiveSidebar('explorer');
+    log(`Opened folder ${folder}`);
+  };
+
   const handleOpenFolder = async () => {
     if (!window.electronAPI) {
       setStatus('Open Folder works only in the desktop app');
@@ -180,17 +249,19 @@ function App() {
     }
     const folder = await window.electronAPI.openFolderDialog();
     if (!folder) return;
-    if (openFiles.some(f => f.isDirty) && !window.confirm('You have unsaved changes. Open another folder anyway?')) return;
+    openFolderPath(folder);
+  };
+
+  const handleCloseFolder = () => {
+    if (openFiles.some(f => f.isDirty) && !window.confirm('You have unsaved changes. Close the folder anyway?')) return;
     setOpenFiles([]);
     setActiveFile(null);
-    setWorkspacePath(folder);
+    setWorkspacePath('');
     try {
-      localStorage.setItem('workspacePath', folder);
+      localStorage.removeItem('workspacePath');
     } catch {
-      // ignore storage errors
+      // ignore
     }
-    setActiveSidebar('explorer');
-    log(`Opened folder ${folder}`);
   };
 
   const handleCodeChange = (value) => {
@@ -302,6 +373,44 @@ function App() {
     }
   };
 
+  const handleGoogleSignIn = async () => {
+    if (!window.electronAPI) {
+      setStatus('Sign-in works only in the desktop app');
+      return;
+    }
+    try {
+      const { code, redirectUri } = await window.electronAPI.googleSignIn();
+      const response = await fetch(`${BACKEND_URL}/api/auth/google`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, redirectUri }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        setUser(data.user);
+        try {
+          localStorage.setItem('user', JSON.stringify(data.user));
+        } catch {
+          // ignore
+        }
+      } else {
+        setStatus('Sign-in failed: ' + data.error);
+      }
+    } catch (err) {
+      setStatus('Sign-in failed: ' + err.message);
+    }
+  };
+
+  const handleSignOut = () => {
+    setUser(null);
+    try {
+      localStorage.removeItem('user');
+    } catch {
+      // ignore
+    }
+    setShowAccountMenu(false);
+  };
+
   const submitSaveAs = () => {
     const newPath = saveAsPath.trim();
     setShowSaveAsModal(false);
@@ -309,20 +418,22 @@ function App() {
   };
 
   const handleKeyDown = (e) => {
-    if (e.ctrlKey && e.key === '`') {
+    if (matchesShortcut(e, shortcuts.toggleTerminal)) {
       e.preventDefault();
       togglePanel();
+      return;
     }
-    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 's') {
+    if (matchesShortcut(e, shortcuts.saveAs)) {
       e.preventDefault();
       handleSaveAs();
       return;
     }
-    if (e.ctrlKey && e.key === 's') {
+    if (matchesShortcut(e, shortcuts.save)) {
       e.preventDefault();
       handleSave();
+      return;
     }
-    if (e.ctrlKey && e.key === 'o') {
+    if (matchesShortcut(e, shortcuts.openFile)) {
       e.preventDefault();
       handleOpenFile();
     }
@@ -340,162 +451,232 @@ function App() {
       tabIndex={0}
       onKeyDown={handleKeyDown}
     >
-      <div style={{ display: 'flex', height: '100%' }}>
-        <div style={{ width: '44px', flexShrink: 0, background: '#333333', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: '8px', gap: '4px' }}>
-          <div
-            onClick={() => setActiveSidebar('explorer')}
-            title="Explorer"
-            style={{
-              fontSize: '20px', cursor: 'pointer', padding: '8px',
-              borderLeft: activeSidebar === 'explorer' ? '2px solid #fff' : '2px solid transparent',
-              opacity: activeSidebar === 'explorer' ? 1 : 0.6,
-            }}
-          >
-            📁
-          </div>
-          <div
-            onClick={() => setActiveSidebar('search')}
-            title="Search"
-            style={{
-              fontSize: '20px', cursor: 'pointer', padding: '8px',
-              borderLeft: activeSidebar === 'search' ? '2px solid #fff' : '2px solid transparent',
-              opacity: activeSidebar === 'search' ? 1 : 0.6,
-            }}
-          >
-            🔍
-          </div>
-        </div>
-
-        {activeSidebar === 'explorer' ? (
-          <FileExplorer key={workspacePath} onFileSelect={handleFileSelect} rootPath={workspacePath} />
-        ) : (
-          <SearchPanel onFileClick={handleFileSelect} rootPath={workspacePath} />
-        )}
-      </div>
-
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, background: '#1e1e1e' }}>
-
-        <div style={{ background: '#1e1e1e', padding: '8px', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative', borderBottom: '1px solid #333' }}>
-          <div style={{ position: 'relative' }}>
-            <MenuItem label="File" active={showFileMenu} onClick={() => setShowFileMenu((prev) => !prev)} />
-            {showFileMenu && (
-              <>
-                <div onClick={() => setShowFileMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
-                <div style={{
-                  position: 'absolute', top: '100%', left: 0, marginTop: '4px',
-                  background: '#252526', border: '1px solid #454545', borderRadius: '4px',
-                  zIndex: 100, minWidth: '220px', padding: '4px 0', boxShadow: '0 4px 10px rgba(0,0,0,0.4)'
-                }}>
-                  <DropdownItem label="Open File..." shortcut="Ctrl+O" onClick={() => { setShowFileMenu(false); handleOpenFile(); }} />
-                  <DropdownItem label="Open Folder..." shortcut="" onClick={() => { setShowFileMenu(false); handleOpenFolder(); }} />
-                  <div style={{ borderTop: '1px solid #454545', margin: '4px 0' }} />
-                  <DropdownItem label="Save" shortcut="Ctrl+S" onClick={() => { setShowFileMenu(false); handleSave(); }} />
-                  <DropdownItem label="Save As..." shortcut="Ctrl+Shift+S" onClick={() => { setShowFileMenu(false); handleSaveAs(); }} />
-                </div>
-              </>
-            )}
-          </div>
-
-          <MenuItem label="Settings" active={showSettings} onClick={() => setShowSettings(true)} />
-          <MenuItem label="Terminal" active={isTerminalOpen && panelView === 'terminal'} onClick={togglePanel} />
-
-          <h3 style={{ color: 'white', margin: '0 0 0 12px', fontSize: '15px' }}>AI-Powered IDE</h3>
-
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <span style={{ color: '#f66', fontSize: '13px' }}>{status}</span>
-            <span
-              onClick={() => openPanel('problems')}
-              title="Show Problems"
-              style={{ display: 'flex', gap: '10px', color: '#ccc', fontSize: '12px', cursor: 'pointer' }}
-            >
-              <span>⊗ {errorCount}</span>
-              <span>⚠ {warningCount}</span>
-            </span>
-          </div>
-        </div>
-
-        {openFiles.length > 0 && (
-          <div style={{ display: 'flex', background: '#252526', borderBottom: '1px solid #333', overflowX: 'auto', flexShrink: 0 }}>
-            {openFiles.map((f) => (
-              <div
-                key={f.path}
-                onClick={() => setActiveFile(f.path)}
-                title={f.path}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: '8px',
-                  padding: '8px 10px', cursor: 'pointer',
-                  background: activeFile === f.path ? '#1e1e1e' : 'transparent',
-                  borderRight: '1px solid #333',
-                  borderTop: activeFile === f.path ? '2px solid #007acc' : '2px solid transparent',
-                  color: activeFile === f.path ? '#fff' : '#999',
-                  fontSize: '13px',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  {f.name}
-                  {f.isDirty && (
-                    <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#e2c08d', minWidth: '14px', textAlign: 'center' }}>
-                      M
-                    </span>
-                  )}
-                </span>
-                <span
-                  onClick={(e) => handleCloseTab(e, f.path)}
-                  style={{ fontSize: '11px', cursor: 'pointer', color: '#888' }}
-                  title="Close"
+      {!workspacePath ? (
+        <WelcomeScreen onOpenFolder={handleOpenFolder} onOpenRecent={openFolderPath} onOpenFile={handleOpenFile} />
+      ) : (
+        <>
+          <div style={{ display: 'flex', height: '100%' }}>
+            <div style={{ width: '44px', flexShrink: 0, background: '#333333', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: '8px', paddingBottom: '8px', height: '100%', boxSizing: 'border-box' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                <div
+                  onClick={() => setActiveSidebar('explorer')}
+                  title="Explorer"
+                  style={{
+                    fontSize: '20px', cursor: 'pointer', padding: '8px',
+                    borderLeft: activeSidebar === 'explorer' ? '2px solid #fff' : '2px solid transparent',
+                    opacity: activeSidebar === 'explorer' ? 1 : 0.6,
+                  }}
+                  onMouseEnter={(e) => { if (activeSidebar !== 'explorer') e.currentTarget.style.opacity = 1; }}
+                  onMouseLeave={(e) => { if (activeSidebar !== 'explorer') e.currentTarget.style.opacity = 0.6; }}
                 >
-                  ✕
-                </span>
+                  📁
+                </div>
+                <div
+                  onClick={() => setActiveSidebar('search')}
+                  title="Search"
+                  style={{
+                    fontSize: '20px', cursor: 'pointer', padding: '8px',
+                    borderLeft: activeSidebar === 'search' ? '2px solid #fff' : '2px solid transparent',
+                    opacity: activeSidebar === 'search' ? 1 : 0.6,
+                  }}
+                  onMouseEnter={(e) => { if (activeSidebar !== 'search') e.currentTarget.style.opacity = 1; }}
+                  onMouseLeave={(e) => { if (activeSidebar !== 'search') e.currentTarget.style.opacity = 0.6; }}
+                >
+                  🔍
+                </div>
               </div>
-            ))}
-          </div>
-        )}
 
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <div style={{ flex: 1, minHeight: 0 }}>
-            {activeTab ? (
-              <Editor
-                height="100%"
-                language={activeTab.language}
-                value={activeTab.content}
-                onChange={handleCodeChange}
-                onMount={(editor) => { editorRef.current = editor; }}
-                onValidate={setMarkers}
-                theme={editorTheme}
-                options={{ fontSize: fontSize }}
-              />
-            ) : (
-              <div style={{ color: '#666', padding: '20px', fontSize: '14px' }}>
-                No file open — select one from the Explorer, or use File → Open File / Open Folder.
+              {/* Account icon pinned to the bottom, VS Code style */}
+              <div style={{ marginTop: 'auto', position: 'relative' }}>
+                <div
+                  onClick={() => (user ? setShowAccountMenu((p) => !p) : handleGoogleSignIn())}
+                  title={user ? user.name : 'Sign in with Google'}
+                  style={{
+                    width: '28px', height: '28px', borderRadius: '50%',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    cursor: 'pointer', overflow: 'hidden',
+                    background: user ? '#0e639c' : 'transparent',
+                    border: user ? 'none' : '1px solid #888',
+                  }}
+                >
+                  {user ? (
+                    user.picture ? (
+                      <img src={user.picture} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    ) : (
+                      <span style={{ color: '#fff', fontSize: '12px', fontWeight: 600 }}>
+                        {user.name ? user.name.charAt(0).toUpperCase() : '?'}
+                      </span>
+                    )
+                  ) : (
+                    <span style={{ fontSize: '16px', color: '#ccc' }}>👤</span>
+                  )}
+                </div>
+
+                {showAccountMenu && user && (
+                  <>
+                    <div onClick={() => setShowAccountMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
+                    <div style={{
+                      position: 'absolute', bottom: '0', left: '44px', marginLeft: '4px',
+                      background: '#252526', border: '1px solid #454545', borderRadius: '4px',
+                      zIndex: 100, minWidth: '200px', boxShadow: '0 4px 10px rgba(0,0,0,0.4)',
+                    }}>
+                      <div style={{ padding: '10px 14px', borderBottom: '1px solid #3a3a3a' }}>
+                        <div style={{ color: '#fff', fontSize: '13px', fontWeight: 600 }}>{user.name}</div>
+                        <div style={{ color: '#999', fontSize: '12px' }}>{user.email}</div>
+                      </div>
+                      <div
+                        onClick={handleSignOut}
+                        style={{ padding: '8px 14px', color: '#ccc', cursor: 'pointer', fontSize: '13px' }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = '#333')}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                      >
+                        Sign Out
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
+            </div>
+
+            {activeSidebar === 'explorer' ? (
+              <FileExplorer key={workspacePath} onFileSelect={handleFileSelect} rootPath={workspacePath} />
+            ) : (
+              <SearchPanel onFileClick={handleFileSelect} rootPath={workspacePath} />
             )}
           </div>
 
-          {panelMounted && (
-            <div
-              style={{
-                display: isTerminalOpen ? 'block' : 'none',
-                height: terminalHeight,
-                borderTop: '2px solid #333',
-                width: '100%',
-                flexShrink: 0,
-              }}
-            >
-              <BottomPanel
-                isMaximized={isTerminalMaximized}
-                onToggleMaximize={toggleMaximize}
-                activeView={panelView}
-                onViewChange={setPanelView}
-                problems={problems}
-                onProblemClick={handleProblemClick}
-                logs={logs}
-                onClearLogs={() => setLogs([])}
-              />
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, background: '#1e1e1e' }}>
+
+            <div style={{ background: '#1e1e1e', padding: '8px', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative', borderBottom: '1px solid #333' }}>
+              <div style={{ position: 'relative' }}>
+                <MenuItem label="File" active={showFileMenu} onClick={() => setShowFileMenu((prev) => !prev)} />
+                {showFileMenu && (
+                  <>
+                    <div onClick={() => setShowFileMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
+                    <div style={{
+                      position: 'absolute', top: '100%', left: 0, marginTop: '4px',
+                      background: '#252526', border: '1px solid #454545', borderRadius: '4px',
+                      zIndex: 100, minWidth: '220px', padding: '4px 0', boxShadow: '0 4px 10px rgba(0,0,0,0.4)'
+                    }}>
+                      <DropdownItem label="Open File..." shortcut="Ctrl+O" onClick={() => { setShowFileMenu(false); handleOpenFile(); }} />
+                      <DropdownItem label="Open Folder..." shortcut="" onClick={() => { setShowFileMenu(false); handleOpenFolder(); }} />
+                      <div style={{ borderTop: '1px solid #454545', margin: '4px 0' }} />
+                      <DropdownItem label="Save" shortcut="Ctrl+S" onClick={() => { setShowFileMenu(false); handleSave(); }} />
+                      <DropdownItem label="Save As..." shortcut="Ctrl+Shift+S" onClick={() => { setShowFileMenu(false); handleSaveAs(); }} />
+                      <div style={{ borderTop: '1px solid #454545', margin: '4px 0' }} />
+                      <DropdownItem label="Close Folder" shortcut="" onClick={() => { setShowFileMenu(false); handleCloseFolder(); }} />
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <MenuItem label="Settings" active={showSettings} onClick={() => setShowSettings(true)} />
+              <MenuItem label="Terminal" active={isTerminalOpen && panelView === 'terminal'} onClick={togglePanel} />
+
+              <h3 style={{ color: 'white', margin: '0 0 0 12px', fontSize: '15px' }}>AI-Powered IDE</h3>
+
+              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <span style={{ color: '#f66', fontSize: '13px' }}>{status}</span>
+                <span
+                  onClick={() => openPanel('problems')}
+                  title="Show Problems"
+                  style={{ display: 'flex', gap: '10px', color: '#ccc', fontSize: '12px', cursor: 'pointer' }}
+                >
+                  <span>⊗ {errorCount}</span>
+                  <span>⚠ {warningCount}</span>
+                </span>
+              </div>
             </div>
-          )}
-        </div>
-      </div>
+
+            {openFiles.length > 0 && (
+              <div style={{ display: 'flex', background: '#252526', borderBottom: '1px solid #333', overflowX: 'auto', flexShrink: 0 }}>
+                {openFiles.map((f) => (
+                  <div
+                    key={f.path}
+                    onClick={() => setActiveFile(f.path)}
+                    title={f.path}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '8px',
+                      padding: '8px 10px', cursor: 'pointer',
+                      background: activeFile === f.path ? '#1e1e1e' : 'transparent',
+                      borderRight: '1px solid #333',
+                      borderTop: activeFile === f.path ? '2px solid #007acc' : '2px solid transparent',
+                      color: activeFile === f.path ? '#fff' : '#999',
+                      fontSize: '13px',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      {f.name}
+                      {f.isDirty && (
+                        <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#e2c08d', minWidth: '14px', textAlign: 'center' }}>
+                          M
+                        </span>
+                      )}
+                    </span>
+                    <span
+                      onClick={(e) => handleCloseTab(e, f.path)}
+                      style={{ fontSize: '11px', cursor: 'pointer', color: '#888' }}
+                      title="Close"
+                    >
+                      ✕
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+              <div style={{ flex: 1, minHeight: 0 }}>
+                {activeTab ? (
+                  <Editor
+                    height="100%"
+                    language={activeTab.language}
+                    value={activeTab.content}
+                    onChange={handleCodeChange}
+                    onMount={(editor) => { editorRef.current = editor; }}
+                    onValidate={setMarkers}
+                    theme={editorTheme}
+                    options={{
+                      fontSize: fontSize,
+                      wordWrap: editorPrefs.wordWrap ? 'on' : 'off',
+                      tabSize: editorPrefs.tabSize,
+                      minimap: { enabled: editorPrefs.minimap },
+                    }}
+                  />
+                ) : (
+                  <div style={{ color: '#666', padding: '20px', fontSize: '14px' }}>
+                    No file open — select one from the Explorer, or use File → Open File / Open Folder.
+                  </div>
+                )}
+              </div>
+
+              {panelMounted && (
+                <div
+                  style={{
+                    display: isTerminalOpen ? 'block' : 'none',
+                    height: terminalHeight,
+                    borderTop: '2px solid #333',
+                    width: '100%',
+                    flexShrink: 0,
+                  }}
+                >
+                  <BottomPanel
+                    isMaximized={isTerminalMaximized}
+                    onToggleMaximize={toggleMaximize}
+                    activeView={panelView}
+                    onViewChange={setPanelView}
+                    problems={problems}
+                    onProblemClick={handleProblemClick}
+                    logs={logs}
+                    onClearLogs={() => setLogs([])}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
 
       {showSaveAsModal && (
         <div style={{
@@ -523,9 +704,11 @@ function App() {
       {showSettings && (
         <Settings
           onClose={() => setShowSettings(false)}
-          onApply={({ theme, fontSize }) => {
+          onApply={({ theme, fontSize, wordWrap, tabSize, minimap, shortcuts: newShortcuts }) => {
             setEditorTheme(theme === 'dark' ? 'vs-dark' : 'vs');
             setFontSize(fontSize);
+            setEditorPrefs({ wordWrap, tabSize, minimap });
+            setShortcuts(newShortcuts);
             setShowSettings(false);
           }}
         />

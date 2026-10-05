@@ -1,5 +1,13 @@
-const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
+const http = require('http');
+const crypto = require('crypto');
+
+// Google Client ID is not secret (it's meant to be public) — safe to keep here.
+// The Client Secret stays only in backend/.env, never in frontend code.
+const GOOGLE_CLIENT_ID = '68515030575-lvhp1t4t7eklumt8goblh17qoheaismu.apps.googleusercontent.com';
+const REDIRECT_PORT = 42813;
+const REDIRECT_URI = `http://127.0.0.1:${REDIRECT_PORT}`;
 
 function createWindow() {
   Menu.setApplicationMenu(null);
@@ -14,7 +22,6 @@ function createWindow() {
     },
   });
 
-  // Ctrl+Shift+I or F12 toggles DevTools
   win.webContents.on('before-input-event', (event, input) => {
     const isDevToolsKey =
       input.type === 'keyDown' &&
@@ -44,6 +51,43 @@ ipcMain.handle('dialog:saveFile', async (event, defaultPath) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   const result = await dialog.showSaveDialog(win, { defaultPath });
   return result.canceled ? null : result.filePath;
+});
+
+ipcMain.handle('auth:googleSignIn', async () => {
+  return new Promise((resolve, reject) => {
+    const state = crypto.randomBytes(16).toString('hex');
+    const authUrl =
+      'https://accounts.google.com/o/oauth2/v2/auth?' +
+      new URLSearchParams({
+        client_id: GOOGLE_CLIENT_ID,
+        redirect_uri: REDIRECT_URI,
+        response_type: 'code',
+        scope: 'openid email profile',
+        state,
+        prompt: 'select_account',
+      });
+
+    const server = http.createServer((req, res) => {
+      const url = new URL(req.url, REDIRECT_URI);
+      const code = url.searchParams.get('code');
+      const returnedState = url.searchParams.get('state');
+
+      res.end('<html><body style="font-family:sans-serif;padding:40px;"><h2>Signed in — you can close this window.</h2></body></html>');
+      server.close();
+
+      if (!code || returnedState !== state) {
+        reject(new Error('Sign-in failed or was cancelled'));
+        return;
+      }
+      resolve({ code, redirectUri: REDIRECT_URI });
+    });
+
+    server.on('error', (err) => reject(err));
+
+    server.listen(REDIRECT_PORT, () => {
+      shell.openExternal(authUrl);
+    });
+  });
 });
 
 app.whenReady().then(createWindow);
