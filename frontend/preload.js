@@ -1,7 +1,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  openFileDialog: () => ipcRenderer.invoke('dialog:openFile'),
   openFolderDialog: () => ipcRenderer.invoke('dialog:openFolder'),
+  openFileDialog: () => ipcRenderer.invoke('dialog:openFile'),
   saveFileDialog: (defaultPath) => ipcRenderer.invoke('dialog:saveFile', defaultPath),
+  googleSignIn: () => ipcRenderer.invoke('auth:googleSignIn'),
 });

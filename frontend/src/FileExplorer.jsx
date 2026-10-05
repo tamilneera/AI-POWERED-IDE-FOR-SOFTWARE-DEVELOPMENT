@@ -1,6 +1,29 @@
 import { useState, useEffect, useRef } from 'react';
 import { BACKEND_URL } from './config';
 
+function IconButton({ onClick, title, children }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <span
+      onClick={onClick}
+      title={title}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        fontSize: '13px',
+        cursor: 'pointer',
+        color: '#ccc',
+        padding: '3px 5px',
+        borderRadius: '4px',
+        background: hover ? '#3a3d41' : 'transparent',
+        lineHeight: 1,
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
 function TreeItem({
   node, onFileClick, onRefresh, depth, dragState, onPointerDownItem,
   hoverPath, onContextMenu, pendingAction, onActionHandled, selectedPath,
@@ -11,7 +34,6 @@ function TreeItem({
   const [inputValue, setInputValue] = useState('');
   const [isHovered, setIsHovered] = useState(false);
 
-  // Runs when the right-click menu picks Rename / New File for this node
   useEffect(() => {
     if (!pendingAction || pendingAction.path !== node.path) return;
     if (pendingAction.type === 'rename') {
@@ -154,9 +176,12 @@ function FileExplorer({ onFileSelect, rootPath }) {
   const [status, setStatus] = useState('Loading...');
   const [loaded, setLoaded] = useState(false);
   const [hoverPath, setHoverPathState] = useState(null);
-  const [contextMenu, setContextMenu] = useState(null); // { x, y, node }
-  const [pendingAction, setPendingAction] = useState(null); // { path, type }
+  const [contextMenu, setContextMenu] = useState(null);
+  const [pendingAction, setPendingAction] = useState(null);
   const [selectedPath, setSelectedPath] = useState(null);
+  const [rootAction, setRootAction] = useState(null);
+  const [rootInput, setRootInput] = useState('');
+  const [rootRowHover, setRootRowHover] = useState(false);
   const hoverPathRef = useRef(null);
   const dragState = useRef({ active: false, path: null, name: null, startX: 0, startY: 0 });
   const [, forceRender] = useState(0);
@@ -176,7 +201,6 @@ function FileExplorer({ onFileSelect, rootPath }) {
           setTree(data);
           setStatus('');
         } else {
-          // Backend answered with an error object instead of a list of files
           setTree([]);
           setStatus(
             (data && data.error ? data.error : 'Could not read this folder') +
@@ -233,8 +257,29 @@ function FileExplorer({ onFileSelect, rootPath }) {
     loadTree();
   };
 
+  const submitRootAction = async () => {
+    if (!rootInput) { setRootAction(null); return; }
+    const newPath = rootPath + '\\' + rootInput;
+    if (rootAction === 'create-folder') {
+      await fetch(`${BACKEND_URL}/api/files/mkdir`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: newPath })
+      });
+    } else {
+      await fetch(`${BACKEND_URL}/api/files/write`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: newPath, content: '' })
+      });
+    }
+    setRootAction(null);
+    setRootInput('');
+    loadTree();
+  };
+
   const onPointerDownItem = (e, node) => {
-    if (e.button !== 0) return; // ignore right-click so the context menu works
+    if (e.button !== 0) return;
     e.stopPropagation();
     dragState.current = { active: false, path: node.path, name: node.name, startX: e.clientX, startY: e.clientY };
     window.addEventListener('pointermove', onPointerMove);
@@ -297,17 +342,48 @@ function FileExplorer({ onFileSelect, rootPath }) {
         overflow: 'hidden',
       }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 8px 4px 12px', flexShrink: 0 }}>
+      <div style={{ padding: '8px 8px 4px 12px', flexShrink: 0 }}>
         <span style={{ color: '#bbb', fontSize: '11px', letterSpacing: '1px', fontWeight: 600 }}>EXPLORER</span>
-        <span style={{ fontSize: '13px', cursor: 'pointer', color: '#bbb' }} onClick={loadTree} title="Refresh">⟳</span>
       </div>
 
       <div
         title={rootPath}
-        style={{ padding: '2px 12px 6px 12px', color: '#e7e7e7', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+        onMouseEnter={() => setRootRowHover(true)}
+        onMouseLeave={() => setRootRowHover(false)}
+        style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '2px 8px 6px 12px',
+        }}
       >
-        ▾ {folderName}
+        <span style={{
+          color: '#e7e7e7', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
+        }}>
+          ▾ {folderName}
+        </span>
+        <div style={{ display: 'flex', gap: '2px', opacity: rootRowHover ? 1 : 0, transition: 'opacity 0.1s' }}>
+          <IconButton onClick={() => setRootAction('create')} title="New File">📄+</IconButton>
+          <IconButton onClick={() => setRootAction('create-folder')} title="New Folder">📁+</IconButton>
+          <IconButton onClick={loadTree} title="Refresh">⟳</IconButton>
+        </div>
       </div>
+
+      {rootAction && (
+        <div style={{ padding: '2px 12px' }}>
+          <input
+            autoFocus
+            placeholder={rootAction === 'create-folder' ? 'folder name' : 'filename.ext'}
+            value={rootInput}
+            onChange={(e) => setRootInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') { setRootAction(null); setRootInput(''); return; }
+              if (e.key === 'Enter') submitRootAction();
+            }}
+            onBlur={() => { setRootAction(null); setRootInput(''); }}
+            style={{ fontSize: '13px', width: '100%', boxSizing: 'border-box' }}
+          />
+        </div>
+      )}
 
       {status && <div style={{ color: '#f66', padding: '0 12px 8px 12px', fontSize: '12px' }}>{status}</div>}
       {loaded && !status && tree.length === 0 && (

@@ -43,8 +43,18 @@ db.exec(`
   id INTEGER PRIMARY KEY CHECK (id = 1),
   theme TEXT DEFAULT 'dark',
   font_size INTEGER DEFAULT 14,
+  word_wrap INTEGER DEFAULT 0,
+  tab_size INTEGER DEFAULT 2,
+  minimap INTEGER DEFAULT 1,
   shortcuts_json TEXT DEFAULT '{}'
 );
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    google_id TEXT UNIQUE,
+    email TEXT,
+    name TEXT,
+    picture TEXT
+  );
 
 INSERT OR IGNORE INTO settings (id, theme, font_size, shortcuts_json)
 VALUES (1, 'dark', 14, '{}');
@@ -52,5 +62,18 @@ VALUES (1, 'dark', 14, '{}');
 `);
 
 console.log('Database connected and tables ready.');
+
+// One-time migration: add new columns if they don't exist yet (safe to leave in permanently)
+const settingsColumns = db.prepare("PRAGMA table_info(settings)").all() as { name: string }[];
+const columnNames = settingsColumns.map(c => c.name);
+if (!columnNames.includes('word_wrap')) {
+  db.exec("ALTER TABLE settings ADD COLUMN word_wrap INTEGER DEFAULT 0");
+}
+if (!columnNames.includes('tab_size')) {
+  db.exec("ALTER TABLE settings ADD COLUMN tab_size INTEGER DEFAULT 2");
+}
+if (!columnNames.includes('minimap')) {
+  db.exec("ALTER TABLE settings ADD COLUMN minimap INTEGER DEFAULT 1");
+}
 
 export default db;
