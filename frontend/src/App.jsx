@@ -58,6 +58,23 @@ function getFileName(filePath) {
   return filePath.split(/[\\/]/).pop();
 }
 
+const DEFAULT_SHORTCUTS = {
+  save: 'Ctrl+S',
+  saveAs: 'Ctrl+Shift+S',
+  openFile: 'Ctrl+O',
+  toggleTerminal: 'Ctrl+`',
+};
+
+function matchesShortcut(e, combo) {
+  if (!combo) return false;
+  const parts = combo.toLowerCase().split('+').map(p => p.trim());
+  const key = parts[parts.length - 1];
+  const ctrl = parts.includes('ctrl');
+  const shift = parts.includes('shift');
+  const alt = parts.includes('alt');
+  return e.ctrlKey === ctrl && e.shiftKey === shift && e.altKey === alt && e.key.toLowerCase() === key;
+}
+
 function App() {
   const [status, setStatus] = useState('');
   const [isTerminalOpen, setIsTerminalOpen] = useState(false);
@@ -71,6 +88,9 @@ function App() {
   const [showSaveAsModal, setShowSaveAsModal] = useState(false);
   const [saveAsPath, setSaveAsPath] = useState('');
   const [activeSidebar, setActiveSidebar] = useState('explorer');
+  const [showAccountMenu, setShowAccountMenu] = useState(false);
+  const [shortcuts, setShortcuts] = useState(DEFAULT_SHORTCUTS);
+  const [editorPrefs, setEditorPrefs] = useState({ wordWrap: false, tabSize: 2, minimap: true });
 
   const [markers, setMarkers] = useState([]);
   const [logs, setLogs] = useState([]);
@@ -87,6 +107,14 @@ function App() {
   const [openFiles, setOpenFiles] = useState([]);
   const [activeFile, setActiveFile] = useState(null);
 
+  const [user, setUser] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('user') || 'null');
+    } catch {
+      return null;
+    }
+  });
+
   const activeTab = openFiles.find(f => f.path === activeFile);
 
   const log = (text, level = 'info') => {
@@ -97,6 +125,29 @@ function App() {
   useEffect(() => {
     setMarkers([]);
   }, [activeFile]);
+
+  useEffect(() => {
+    fetch(`${BACKEND_URL}/api/settings`)
+      .then(res => res.json())
+      .then(data => {
+        setEditorTheme(data.theme === 'light' ? 'vs' : 'vs-dark');
+        setFontSize(data.font_size || 14);
+        setEditorPrefs({
+          wordWrap: !!data.word_wrap,
+          tabSize: data.tab_size || 2,
+          minimap: data.minimap === undefined ? true : !!data.minimap,
+        });
+        try {
+          const parsed = JSON.parse(data.shortcuts_json || '{}');
+          setShortcuts({ ...DEFAULT_SHORTCUTS, ...parsed });
+        } catch {
+          // keep defaults
+        }
+      })
+      .catch(() => {
+        // non-fatal — just keep built-in defaults
+      });
+  }, []);
 
   const problems = markers
     .filter(m => m.severity >= 2)
@@ -322,6 +373,44 @@ function App() {
     }
   };
 
+  const handleGoogleSignIn = async () => {
+    if (!window.electronAPI) {
+      setStatus('Sign-in works only in the desktop app');
+      return;
+    }
+    try {
+      const { code, redirectUri } = await window.electronAPI.googleSignIn();
+      const response = await fetch(`${BACKEND_URL}/api/auth/google`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, redirectUri }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        setUser(data.user);
+        try {
+          localStorage.setItem('user', JSON.stringify(data.user));
+        } catch {
+          // ignore
+        }
+      } else {
+        setStatus('Sign-in failed: ' + data.error);
+      }
+    } catch (err) {
+      setStatus('Sign-in failed: ' + err.message);
+    }
+  };
+
+  const handleSignOut = () => {
+    setUser(null);
+    try {
+      localStorage.removeItem('user');
+    } catch {
+      // ignore
+    }
+    setShowAccountMenu(false);
+  };
+
   const submitSaveAs = () => {
     const newPath = saveAsPath.trim();
     setShowSaveAsModal(false);
@@ -329,20 +418,22 @@ function App() {
   };
 
   const handleKeyDown = (e) => {
-    if (e.ctrlKey && e.key === '`') {
+    if (matchesShortcut(e, shortcuts.toggleTerminal)) {
       e.preventDefault();
       togglePanel();
+      return;
     }
-    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 's') {
+    if (matchesShortcut(e, shortcuts.saveAs)) {
       e.preventDefault();
       handleSaveAs();
       return;
     }
-    if (e.ctrlKey && e.key === 's') {
+    if (matchesShortcut(e, shortcuts.save)) {
       e.preventDefault();
       handleSave();
+      return;
     }
-    if (e.ctrlKey && e.key === 'o') {
+    if (matchesShortcut(e, shortcuts.openFile)) {
       e.preventDefault();
       handleOpenFile();
     }
@@ -365,28 +456,85 @@ function App() {
       ) : (
         <>
           <div style={{ display: 'flex', height: '100%' }}>
-            <div style={{ width: '44px', flexShrink: 0, background: '#333333', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: '8px', gap: '4px' }}>
-              <div
-                onClick={() => setActiveSidebar('explorer')}
-                title="Explorer"
-                style={{
-                  fontSize: '20px', cursor: 'pointer', padding: '8px',
-                  borderLeft: activeSidebar === 'explorer' ? '2px solid #fff' : '2px solid transparent',
-                  opacity: activeSidebar === 'explorer' ? 1 : 0.6,
-                }}
-              >
-                📁
+            <div style={{ width: '44px', flexShrink: 0, background: '#333333', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: '8px', paddingBottom: '8px', height: '100%', boxSizing: 'border-box' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                <div
+                  onClick={() => setActiveSidebar('explorer')}
+                  title="Explorer"
+                  style={{
+                    fontSize: '20px', cursor: 'pointer', padding: '8px',
+                    borderLeft: activeSidebar === 'explorer' ? '2px solid #fff' : '2px solid transparent',
+                    opacity: activeSidebar === 'explorer' ? 1 : 0.6,
+                  }}
+                  onMouseEnter={(e) => { if (activeSidebar !== 'explorer') e.currentTarget.style.opacity = 1; }}
+                  onMouseLeave={(e) => { if (activeSidebar !== 'explorer') e.currentTarget.style.opacity = 0.6; }}
+                >
+                  📁
+                </div>
+                <div
+                  onClick={() => setActiveSidebar('search')}
+                  title="Search"
+                  style={{
+                    fontSize: '20px', cursor: 'pointer', padding: '8px',
+                    borderLeft: activeSidebar === 'search' ? '2px solid #fff' : '2px solid transparent',
+                    opacity: activeSidebar === 'search' ? 1 : 0.6,
+                  }}
+                  onMouseEnter={(e) => { if (activeSidebar !== 'search') e.currentTarget.style.opacity = 1; }}
+                  onMouseLeave={(e) => { if (activeSidebar !== 'search') e.currentTarget.style.opacity = 0.6; }}
+                >
+                  🔍
+                </div>
               </div>
-              <div
-                onClick={() => setActiveSidebar('search')}
-                title="Search"
-                style={{
-                  fontSize: '20px', cursor: 'pointer', padding: '8px',
-                  borderLeft: activeSidebar === 'search' ? '2px solid #fff' : '2px solid transparent',
-                  opacity: activeSidebar === 'search' ? 1 : 0.6,
-                }}
-              >
-                🔍
+
+              {/* Account icon pinned to the bottom, VS Code style */}
+              <div style={{ marginTop: 'auto', position: 'relative' }}>
+                <div
+                  onClick={() => (user ? setShowAccountMenu((p) => !p) : handleGoogleSignIn())}
+                  title={user ? user.name : 'Sign in with Google'}
+                  style={{
+                    width: '28px', height: '28px', borderRadius: '50%',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    cursor: 'pointer', overflow: 'hidden',
+                    background: user ? '#0e639c' : 'transparent',
+                    border: user ? 'none' : '1px solid #888',
+                  }}
+                >
+                  {user ? (
+                    user.picture ? (
+                      <img src={user.picture} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    ) : (
+                      <span style={{ color: '#fff', fontSize: '12px', fontWeight: 600 }}>
+                        {user.name ? user.name.charAt(0).toUpperCase() : '?'}
+                      </span>
+                    )
+                  ) : (
+                    <span style={{ fontSize: '16px', color: '#ccc' }}>👤</span>
+                  )}
+                </div>
+
+                {showAccountMenu && user && (
+                  <>
+                    <div onClick={() => setShowAccountMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
+                    <div style={{
+                      position: 'absolute', bottom: '0', left: '44px', marginLeft: '4px',
+                      background: '#252526', border: '1px solid #454545', borderRadius: '4px',
+                      zIndex: 100, minWidth: '200px', boxShadow: '0 4px 10px rgba(0,0,0,0.4)',
+                    }}>
+                      <div style={{ padding: '10px 14px', borderBottom: '1px solid #3a3a3a' }}>
+                        <div style={{ color: '#fff', fontSize: '13px', fontWeight: 600 }}>{user.name}</div>
+                        <div style={{ color: '#999', fontSize: '12px' }}>{user.email}</div>
+                      </div>
+                      <div
+                        onClick={handleSignOut}
+                        style={{ padding: '8px 14px', color: '#ccc', cursor: 'pointer', fontSize: '13px' }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = '#333')}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                      >
+                        Sign Out
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 
@@ -489,7 +637,12 @@ function App() {
                     onMount={(editor) => { editorRef.current = editor; }}
                     onValidate={setMarkers}
                     theme={editorTheme}
-                    options={{ fontSize: fontSize }}
+                    options={{
+                      fontSize: fontSize,
+                      wordWrap: editorPrefs.wordWrap ? 'on' : 'off',
+                      tabSize: editorPrefs.tabSize,
+                      minimap: { enabled: editorPrefs.minimap },
+                    }}
                   />
                 ) : (
                   <div style={{ color: '#666', padding: '20px', fontSize: '14px' }}>
@@ -551,9 +704,11 @@ function App() {
       {showSettings && (
         <Settings
           onClose={() => setShowSettings(false)}
-          onApply={({ theme, fontSize }) => {
+          onApply={({ theme, fontSize, wordWrap, tabSize, minimap, shortcuts: newShortcuts }) => {
             setEditorTheme(theme === 'dark' ? 'vs-dark' : 'vs');
             setFontSize(fontSize);
+            setEditorPrefs({ wordWrap, tabSize, minimap });
+            setShortcuts(newShortcuts);
             setShowSettings(false);
           }}
         />
