@@ -6,6 +6,8 @@ import WelcomeScreen from './WelcomeScreen';
 import BottomPanel from './Components/BottomPanel';
 import Settings from './Components/Settings';
 import { BACKEND_URL } from './config';
+import ModelSelector from './Components/ModelSelector';
+import ChatPanel from './Components/ChatPanel';
 
 const DEFAULT_WORKSPACE = '';
 
@@ -95,6 +97,8 @@ function App() {
   const [markers, setMarkers] = useState([]);
   const [logs, setLogs] = useState([]);
   const editorRef = useRef(null);
+  const [selectedModel, setSelectedModel] = useState(null);
+  const [showChat, setShowChat] = useState(false);
 
   const [workspacePath, setWorkspacePath] = useState(() => {
     try {
@@ -486,7 +490,6 @@ function App() {
                 </div>
               </div>
 
-              {/* Account icon pinned to the bottom, VS Code style */}
               <div style={{ marginTop: 'auto', position: 'relative' }}>
                 <div
                   onClick={() => (user ? setShowAccountMenu((p) => !p) : handleGoogleSignIn())}
@@ -575,6 +578,8 @@ function App() {
 
               <h3 style={{ color: 'white', margin: '0 0 0 12px', fontSize: '15px' }}>AI-Powered IDE</h3>
 
+              <MenuItem label="AI Chat" active={showChat} onClick={() => setShowChat(prev => !prev)} />
+
               <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <span style={{ color: '#f66', fontSize: '13px' }}>{status}</span>
                 <span
@@ -627,26 +632,34 @@ function App() {
             )}
 
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-              <div style={{ flex: 1, minHeight: 0 }}>
-                {activeTab ? (
-                  <Editor
-                    height="100%"
-                    language={activeTab.language}
-                    value={activeTab.content}
-                    onChange={handleCodeChange}
-                    onMount={(editor) => { editorRef.current = editor; }}
-                    onValidate={setMarkers}
-                    theme={editorTheme}
-                    options={{
-                      fontSize: fontSize,
-                      wordWrap: editorPrefs.wordWrap ? 'on' : 'off',
-                      tabSize: editorPrefs.tabSize,
-                      minimap: { enabled: editorPrefs.minimap },
-                    }}
-                  />
-                ) : (
-                  <div style={{ color: '#666', padding: '20px', fontSize: '14px' }}>
-                    No file open — select one from the Explorer, or use File → Open File / Open Folder.
+              <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+                <div style={{ flex: 1, minHeight: 0 }}>
+                  {activeTab ? (
+                    <Editor
+                      height="100%"
+                      language={activeTab.language}
+                      value={activeTab.content}
+                      onChange={handleCodeChange}
+                      onMount={(editor) => { editorRef.current = editor; }}
+                      onValidate={setMarkers}
+                      theme={editorTheme}
+                      options={{
+                        fontSize: fontSize,
+                        wordWrap: editorPrefs.wordWrap ? 'on' : 'off',
+                        tabSize: editorPrefs.tabSize,
+                        minimap: { enabled: editorPrefs.minimap },
+                      }}
+                    />
+                  ) : (
+                    <div style={{ color: '#666', padding: '20px', fontSize: '14px' }}>
+                      No file open — select one from the Explorer, or use File → Open File / Open Folder.
+                    </div>
+                  )}
+                </div>
+
+                {showChat && (
+                  <div style={{ width: '340px', flexShrink: 0, borderLeft: '1px solid #333' }}>
+                    <ChatPanel model={selectedModel} onModelChange={setSelectedModel} onClose={() => setShowChat(false)} />
                   </div>
                 )}
               </div>
@@ -670,6 +683,7 @@ function App() {
                     onProblemClick={handleProblemClick}
                     logs={logs}
                     onClearLogs={() => setLogs([])}
+                    cwd={workspacePath}
                   />
                 </div>
               )}
