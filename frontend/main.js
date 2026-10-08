@@ -47,6 +47,12 @@ ipcMain.handle('dialog:openFolder', async (event) => {
   return result.canceled ? null : result.filePaths[0];
 });
 
+ipcMain.handle('dialog:pickAttachment', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const result = await dialog.showOpenDialog(win, { properties: ['openFile'] });
+  return result.canceled ? null : result.filePaths[0];
+});
+
 ipcMain.handle('dialog:saveFile', async (event, defaultPath) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   const result = await dialog.showSaveDialog(win, { defaultPath });

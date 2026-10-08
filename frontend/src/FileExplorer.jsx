@@ -15,7 +15,7 @@ function IconButton({ onClick, title, children }) {
         color: '#ccc',
         padding: '3px 5px',
         borderRadius: '4px',
-        background: hover ? '#3a3d41' : 'transparent',
+        background: hover ? '#262b3b' : 'transparent',
         lineHeight: 1,
       }}
     >
@@ -85,8 +85,8 @@ function TreeItem({
     display: 'flex',
     alignItems: 'center',
     gap: '4px',
-    background: isHoverTarget ? '#264f78' : isSelected ? '#37373d' : isHovered ? '#2a2d2e' : 'transparent',
-    borderTop: isHoverTarget ? '1px solid #4fc1ff' : '1px solid transparent',
+    background: isHoverTarget ? '#3a3480' : isSelected ? '#2a2650' : isHovered ? '#262b3b' : 'transparent',
+    borderTop: isHoverTarget ? '1px solid #a99dff' : '1px solid transparent',
     opacity: isDragging ? 0.4 : 1,
     userSelect: 'none',
   };
@@ -326,15 +326,14 @@ function FileExplorer({ onFileSelect, rootPath }) {
   };
 
   const menuItemStyle = { padding: '6px 24px', color: '#ccc', cursor: 'pointer', fontSize: '13px' };
-  const hoverOn = (e) => (e.currentTarget.style.background = '#094771');
+  const hoverOn = (e) => (e.currentTarget.style.background = '#2a2650');
   const hoverOff = (e) => (e.currentTarget.style.background = 'transparent');
 
   return (
     <div
       style={{
-        width: '220px',
-        flexShrink: 0,
-        background: '#252526',
+        width: '100%',
+        background: '#171a24',
         height: '100%',
         boxSizing: 'border-box',
         display: 'flex',
@@ -411,7 +410,7 @@ function FileExplorer({ onFileSelect, rootPath }) {
           />
           <div style={{
             position: 'fixed', top: contextMenu.y, left: contextMenu.x, zIndex: 1000,
-            background: '#252526', border: '1px solid #454545', borderRadius: '4px',
+            background: '#171a24', border: '1px solid #262a38', borderRadius: '4px',
             minWidth: '160px', padding: '4px 0', boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
           }}>
             {contextMenu.node.isDirectory && (

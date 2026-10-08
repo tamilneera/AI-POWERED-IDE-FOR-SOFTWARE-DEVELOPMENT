@@ -82,7 +82,7 @@ function SearchPanel({ onFileClick, rootPath }) {
 
   return (
     <div style={{
-      width: '260px', flexShrink: 0, background: '#252526', height: '100%',
+      width: '100%', background: '#171a24', height: '100%',
       boxSizing: 'border-box', display: 'flex', flexDirection: 'column', overflow: 'hidden',
     }}>
       <div style={{ padding: '8px 8px 0 8px', flexShrink: 0 }}>
@@ -116,11 +116,11 @@ function SearchPanel({ onFileClick, rootPath }) {
         )}
 
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '8px', fontSize: '11px' }}>
-          <label style={{ color: useRegex ? '#4fc1ff' : '#999', cursor: 'pointer' }}>
+          <label style={{ color: useRegex ? '#a99dff' : '#999', cursor: 'pointer' }}>
             <input type="checkbox" checked={useRegex} onChange={(e) => setUseRegex(e.target.checked)} style={{ marginRight: '2px' }} />
             .*
           </label>
-          <label style={{ color: caseSensitive ? '#4fc1ff' : '#999', cursor: 'pointer' }}>
+          <label style={{ color: caseSensitive ? '#a99dff' : '#999', cursor: 'pointer' }}>
             <input type="checkbox" checked={caseSensitive} onChange={(e) => setCaseSensitive(e.target.checked)} style={{ marginRight: '2px' }} />
             Aa
           </label>

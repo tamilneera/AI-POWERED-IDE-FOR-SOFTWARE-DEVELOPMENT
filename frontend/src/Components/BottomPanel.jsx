@@ -57,9 +57,9 @@ export default function BottomPanel({
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#1e1e1e' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: '#12141c' }}>
       {/* Top-level view tabs, VS Code style */}
-      <div style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid #333', background: '#252526' }}>
+      <div style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid #262a38', background: '#171a24' }}>
         {VIEWS.map((label) => {
           const view = label.toLowerCase();
           const isActive = activeView === view;
@@ -73,8 +73,8 @@ export default function BottomPanel({
                 gap: '6px',
                 padding: '6px 14px',
                 fontSize: '12px',
-                color: isActive ? '#fff' : '#969696',
-                borderBottom: isActive ? '2px solid #007acc' : '2px solid transparent',
+                color: isActive ? '#fff' : '#8a90a6',
+                borderBottom: isActive ? '2px solid #6d5ef5' : '2px solid transparent',
                 cursor: 'pointer',
                 whiteSpace: 'nowrap',
               }}
@@ -83,7 +83,7 @@ export default function BottomPanel({
               {view === 'problems' && problems.length > 0 && (
                 <span
                   style={{
-                    background: '#4d4d4d',
+                    background: '#2a2650',
                     color: '#fff',
                     borderRadius: '8px',
                     padding: '0 6px',
@@ -105,7 +105,7 @@ export default function BottomPanel({
             marginLeft: 'auto',
             padding: '4px 12px',
             fontSize: '14px',
-            color: '#969696',
+            color: '#8a90a6',
             cursor: 'pointer',
           }}
         >
@@ -117,7 +117,7 @@ export default function BottomPanel({
       {activeView === 'problems' && (
         <div style={{ flex: 1, overflowY: 'auto', fontSize: '12px' }}>
           {problems.length === 0 ? (
-            <div style={{ padding: '10px', color: '#969696' }}>
+            <div style={{ padding: '10px', color: '#8a90a6' }}>
               No problems have been detected in the current file.
             </div>
           ) : (
@@ -126,7 +126,7 @@ export default function BottomPanel({
                 key={i}
                 onClick={() => onProblemClick(p)}
                 style={{ display: 'flex', gap: '8px', padding: '3px 10px', cursor: 'pointer', color: '#ccc' }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = '#2a2d2e')}
+                onMouseEnter={(e) => (e.currentTarget.style.background = '#262b3b')}
                 onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
               >
                 <span style={{ color: severityColor(p.severity), width: '14px' }}>{severityIcon(p.severity)}</span>
@@ -152,14 +152,14 @@ export default function BottomPanel({
       {/* Output */}
       {activeView === 'output' && (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '2px 10px', borderBottom: '1px solid #333' }}>
-            <span onClick={onClearLogs} style={{ color: '#969696', fontSize: '12px', cursor: 'pointer' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '2px 10px', borderBottom: '1px solid #262a38' }}>
+            <span onClick={onClearLogs} style={{ color: '#8a90a6', fontSize: '12px', cursor: 'pointer' }}>
               Clear Output
             </span>
           </div>
           <div style={{ flex: 1, overflowY: 'auto', padding: '6px 10px', fontFamily: 'Consolas, monospace', fontSize: '12px' }}>
             {logs.length === 0 ? (
-              <div style={{ color: '#969696' }}>No output yet.</div>
+              <div style={{ color: '#8a90a6' }}>No output yet.</div>
             ) : (
               logs.map((l, i) => (
                 <div key={i} style={{ color: l.level === 'error' ? '#f48771' : '#ccc', whiteSpace: 'pre-wrap' }}>
@@ -174,7 +174,7 @@ export default function BottomPanel({
 
       {/* Debug Console */}
       {activeView === 'debug console' && (
-        <div style={{ padding: '10px', color: '#969696', fontSize: '12px', overflowY: 'auto', flex: 1, fontFamily: 'monospace' }}>
+        <div style={{ padding: '10px', color: '#8a90a6', fontSize: '12px', overflowY: 'auto', flex: 1, fontFamily: 'monospace' }}>
           No active debug session. (Wire this to debugger output later.)
         </div>
       )}
@@ -188,7 +188,7 @@ export default function BottomPanel({
           minHeight: 0,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', background: '#1e1e1e', borderBottom: '1px solid #333' }}>
+        <div style={{ display: 'flex', alignItems: 'center', background: '#12141c', borderBottom: '1px solid #262a38' }}>
           {tabs.map((tab) => (
             <div
               key={tab.id}
@@ -199,8 +199,8 @@ export default function BottomPanel({
                 gap: '6px',
                 padding: '4px 10px',
                 fontSize: '12px',
-                color: activeId === tab.id ? '#fff' : '#969696',
-                background: activeId === tab.id ? '#2d2d2d' : 'transparent',
+                color: activeId === tab.id ? '#fff' : '#8a90a6',
+                background: activeId === tab.id ? '#1d212d' : 'transparent',
                 cursor: 'pointer',
               }}
             >
@@ -211,7 +211,7 @@ export default function BottomPanel({
                     e.stopPropagation();
                     closeTerminal(tab.id);
                   }}
-                  style={{ color: '#969696' }}
+                  style={{ color: '#8a90a6' }}
                 >
                   ×
                 </span>
@@ -221,7 +221,7 @@ export default function BottomPanel({
           <div
             onClick={addTerminal}
             title="New Terminal"
-            style={{ padding: '4px 10px', color: '#969696', cursor: 'pointer', fontSize: '14px' }}
+            style={{ padding: '4px 10px', color: '#8a90a6', cursor: 'pointer', fontSize: '14px' }}
           >
             +
           </div>

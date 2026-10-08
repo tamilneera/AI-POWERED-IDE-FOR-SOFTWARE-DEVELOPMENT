@@ -80,7 +80,7 @@ function Settings({ onClose, onApply }) {
       background: 'rgba(0,0,0,0.6)', display: 'flex',
       alignItems: 'center', justifyContent: 'center', zIndex: 1000
     }}>
-      <div style={{ background: '#252526', padding: '20px', borderRadius: '8px', width: '360px', color: '#ccc', maxHeight: '85vh', overflowY: 'auto' }}>
+      <div style={{ background: '#171a24', padding: '20px', borderRadius: '8px', width: '360px', color: '#ccc', maxHeight: '85vh', overflowY: 'auto' }}>
         <h3 style={{ marginTop: 0, color: 'white' }}>Settings</h3>
 
         <div style={{ marginBottom: '12px' }}>

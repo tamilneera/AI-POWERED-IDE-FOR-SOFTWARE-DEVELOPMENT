@@ -3,6 +3,7 @@ import { Terminal as XTerm } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import 'xterm/css/xterm.css';
 import { WS_URL } from '../config';
+import { terminalTheme } from '../theme';
 
 export default function Terminal() {
   const containerRef = useRef(null);
@@ -15,10 +16,7 @@ export default function Terminal() {
       cursorBlink: true,
       fontFamily: 'Menlo, Consolas, monospace',
       fontSize: 13,
-      theme: {
-        background: '#1e1e1e',
-        foreground: '#d4d4d4',
-      },
+      theme: terminalTheme,
     });
 
     const fitAddon = new FitAddon();
@@ -89,7 +87,7 @@ export default function Terminal() {
       }
     });
 
-    // Re-fit whenever the container's size changes (window resize or the panel being toggled)
+    // Re-fit whenever the container's size changes (window resize, panel toggled or dragged)
     const resizeObserver = new ResizeObserver(() => {
       safeFit();
     });
