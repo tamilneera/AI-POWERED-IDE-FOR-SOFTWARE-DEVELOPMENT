@@ -5,4 +5,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openFileDialog: () => ipcRenderer.invoke('dialog:openFile'),
   saveFileDialog: (defaultPath) => ipcRenderer.invoke('dialog:saveFile', defaultPath),
   googleSignIn: () => ipcRenderer.invoke('auth:googleSignIn'),
+  pickAttachmentFile: () => ipcRenderer.invoke('dialog:pickAttachment'),
 });

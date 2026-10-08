@@ -6,6 +6,11 @@ import WelcomeScreen from './WelcomeScreen';
 import BottomPanel from './Components/BottomPanel';
 import Settings from './Components/Settings';
 import { BACKEND_URL } from './config';
+import ChatPanel from './Components/ChatPanel';
+import LayoutToggles from './Components/LayoutToggles';
+import ResizeHandle from './Components/ResizeHandle';
+import { useLayout } from './useLayout';
+import { defineIdeTheme } from './theme';
 
 const DEFAULT_WORKSPACE = '';
 
@@ -19,9 +24,9 @@ function MenuItem({ label, active, onClick }) {
         cursor: 'pointer',
         fontSize: '13px',
         borderRadius: '3px',
-        background: active ? '#333' : 'transparent',
+        background: active ? '#262a38' : 'transparent',
       }}
-      onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = '#2a2d2e'; }}
+      onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = '#262b3b'; }}
       onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent'; }}
     >
       {label}
@@ -34,7 +39,7 @@ function DropdownItem({ label, shortcut, onClick }) {
     <div
       onClick={onClick}
       style={{ display: 'flex', justifyContent: 'space-between', gap: '24px', padding: '8px 14px', color: '#ccc', cursor: 'pointer', fontSize: '13px' }}
-      onMouseEnter={(e) => (e.currentTarget.style.background = '#094771')}
+      onMouseEnter={(e) => (e.currentTarget.style.background = '#2a2650')}
       onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
     >
       <span>{label}</span>
@@ -82,7 +87,7 @@ function App() {
   const [panelMounted, setPanelMounted] = useState(false);
   const [panelView, setPanelView] = useState('terminal');
   const [showSettings, setShowSettings] = useState(false);
-  const [editorTheme, setEditorTheme] = useState('vs-dark');
+  const [editorTheme, setEditorTheme] = useState('ide-dark');
   const [fontSize, setFontSize] = useState(14);
   const [showFileMenu, setShowFileMenu] = useState(false);
   const [showSaveAsModal, setShowSaveAsModal] = useState(false);
@@ -95,6 +100,11 @@ function App() {
   const [markers, setMarkers] = useState([]);
   const [logs, setLogs] = useState([]);
   const editorRef = useRef(null);
+  const [selectedModel, setSelectedModel] = useState(null);
+
+  // layout: side bar / AI panel visibility + sizes (remembered between runs)
+  // togglePanel is defined further down, so it is wrapped in an arrow (looked up only when Ctrl+J is pressed)
+  const { layout, toggle: toggleLayout, resizeBy } = useLayout({ onTogglePanel: () => togglePanel() });
 
   const [workspacePath, setWorkspacePath] = useState(() => {
     try {
@@ -130,7 +140,7 @@ function App() {
     fetch(`${BACKEND_URL}/api/settings`)
       .then(res => res.json())
       .then(data => {
-        setEditorTheme(data.theme === 'light' ? 'vs' : 'vs-dark');
+        setEditorTheme(data.theme === 'light' ? 'vs' : 'ide-dark');
         setFontSize(data.font_size || 14);
         setEditorPrefs({
           wordWrap: !!data.word_wrap,
@@ -184,6 +194,16 @@ function App() {
       setIsTerminalOpen(false);
     } else {
       openPanel('terminal');
+    }
+  };
+
+  // VS Code behaviour: clicking the active activity-bar icon hides the side bar
+  const selectSidebar = (name) => {
+    if (activeSidebar === name && layout.showSidebar) {
+      toggleLayout('showSidebar');
+    } else {
+      setActiveSidebar(name);
+      if (!layout.showSidebar) toggleLayout('showSidebar');
     }
   };
 
@@ -417,76 +437,86 @@ function App() {
     if (newPath) saveToPath(newPath);
   };
 
+  // (Ctrl+B / Ctrl+J / Ctrl+Alt+B are handled in useLayout.js)
   const handleKeyDown = (e) => {
+    const stop = () => { e.preventDefault(); e.stopPropagation(); };
     if (matchesShortcut(e, shortcuts.toggleTerminal)) {
-      e.preventDefault();
+      stop();
       togglePanel();
       return;
     }
     if (matchesShortcut(e, shortcuts.saveAs)) {
-      e.preventDefault();
+      stop();
       handleSaveAs();
       return;
     }
     if (matchesShortcut(e, shortcuts.save)) {
-      e.preventDefault();
+      stop();
       handleSave();
       return;
     }
     if (matchesShortcut(e, shortcuts.openFile)) {
-      e.preventDefault();
+      stop();
       handleOpenFile();
     }
   };
+
+  // Listen on the whole window in the capture phase, so shortcuts also work when the cursor is
+  // in the editor or the terminal. The ref always holds the latest handleKeyDown (no stale state).
+  const keyHandlerRef = useRef(handleKeyDown);
+  keyHandlerRef.current = handleKeyDown;
+  useEffect(() => {
+    const onKey = (e) => keyHandlerRef.current(e);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
 
   const toggleMaximize = () => {
     setIsTerminalMaximized((prev) => !prev);
   };
 
-  const terminalHeight = isTerminalMaximized ? '80vh' : '25vh';
+  const terminalHeight = isTerminalMaximized ? '80vh' : `${layout.panelHeight}px`;
 
   return (
     <div
-      style={{ display: 'flex', height: '100vh', width: '100%', background: '#1e1e1e' }}
-      tabIndex={0}
-      onKeyDown={handleKeyDown}
+      style={{ display: 'flex', height: '100vh', width: '100%', background: '#12141c' }}
     >
       {!workspacePath ? (
         <WelcomeScreen onOpenFolder={handleOpenFolder} onOpenRecent={openFolderPath} onOpenFile={handleOpenFile} />
       ) : (
         <>
+          {/* ---------- Primary side bar: activity bar + Explorer/Search ---------- */}
           <div style={{ display: 'flex', height: '100%' }}>
-            <div style={{ width: '44px', flexShrink: 0, background: '#333333', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: '8px', paddingBottom: '8px', height: '100%', boxSizing: 'border-box' }}>
+            <div style={{ width: '44px', flexShrink: 0, background: '#0e1016', display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: '8px', paddingBottom: '8px', height: '100%', boxSizing: 'border-box' }}>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
                 <div
-                  onClick={() => setActiveSidebar('explorer')}
-                  title="Explorer"
+                  onClick={() => selectSidebar('explorer')}
+                  title="Explorer (Ctrl+B to hide/show)"
                   style={{
                     fontSize: '20px', cursor: 'pointer', padding: '8px',
-                    borderLeft: activeSidebar === 'explorer' ? '2px solid #fff' : '2px solid transparent',
-                    opacity: activeSidebar === 'explorer' ? 1 : 0.6,
+                    borderLeft: activeSidebar === 'explorer' && layout.showSidebar ? '2px solid #fff' : '2px solid transparent',
+                    opacity: activeSidebar === 'explorer' && layout.showSidebar ? 1 : 0.6,
                   }}
-                  onMouseEnter={(e) => { if (activeSidebar !== 'explorer') e.currentTarget.style.opacity = 1; }}
-                  onMouseLeave={(e) => { if (activeSidebar !== 'explorer') e.currentTarget.style.opacity = 0.6; }}
+                  onMouseEnter={(e) => { e.currentTarget.style.opacity = 1; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.opacity = activeSidebar === 'explorer' && layout.showSidebar ? 1 : 0.6; }}
                 >
                   📁
                 </div>
                 <div
-                  onClick={() => setActiveSidebar('search')}
+                  onClick={() => selectSidebar('search')}
                   title="Search"
                   style={{
                     fontSize: '20px', cursor: 'pointer', padding: '8px',
-                    borderLeft: activeSidebar === 'search' ? '2px solid #fff' : '2px solid transparent',
-                    opacity: activeSidebar === 'search' ? 1 : 0.6,
+                    borderLeft: activeSidebar === 'search' && layout.showSidebar ? '2px solid #fff' : '2px solid transparent',
+                    opacity: activeSidebar === 'search' && layout.showSidebar ? 1 : 0.6,
                   }}
-                  onMouseEnter={(e) => { if (activeSidebar !== 'search') e.currentTarget.style.opacity = 1; }}
-                  onMouseLeave={(e) => { if (activeSidebar !== 'search') e.currentTarget.style.opacity = 0.6; }}
+                  onMouseEnter={(e) => { e.currentTarget.style.opacity = 1; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.opacity = activeSidebar === 'search' && layout.showSidebar ? 1 : 0.6; }}
                 >
                   🔍
                 </div>
               </div>
 
-              {/* Account icon pinned to the bottom, VS Code style */}
               <div style={{ marginTop: 'auto', position: 'relative' }}>
                 <div
                   onClick={() => (user ? setShowAccountMenu((p) => !p) : handleGoogleSignIn())}
@@ -495,7 +525,7 @@ function App() {
                     width: '28px', height: '28px', borderRadius: '50%',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     cursor: 'pointer', overflow: 'hidden',
-                    background: user ? '#0e639c' : 'transparent',
+                    background: user ? '#6d5ef5' : 'transparent',
                     border: user ? 'none' : '1px solid #888',
                   }}
                 >
@@ -517,17 +547,17 @@ function App() {
                     <div onClick={() => setShowAccountMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
                     <div style={{
                       position: 'absolute', bottom: '0', left: '44px', marginLeft: '4px',
-                      background: '#252526', border: '1px solid #454545', borderRadius: '4px',
+                      background: '#171a24', border: '1px solid #262a38', borderRadius: '4px',
                       zIndex: 100, minWidth: '200px', boxShadow: '0 4px 10px rgba(0,0,0,0.4)',
                     }}>
-                      <div style={{ padding: '10px 14px', borderBottom: '1px solid #3a3a3a' }}>
+                      <div style={{ padding: '10px 14px', borderBottom: '1px solid #262a38' }}>
                         <div style={{ color: '#fff', fontSize: '13px', fontWeight: 600 }}>{user.name}</div>
                         <div style={{ color: '#999', fontSize: '12px' }}>{user.email}</div>
                       </div>
                       <div
                         onClick={handleSignOut}
                         style={{ padding: '8px 14px', color: '#ccc', cursor: 'pointer', fontSize: '13px' }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = '#333')}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = '#262a38')}
                         onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                       >
                         Sign Out
@@ -538,16 +568,26 @@ function App() {
               </div>
             </div>
 
-            {activeSidebar === 'explorer' ? (
-              <FileExplorer key={workspacePath} onFileSelect={handleFileSelect} rootPath={workspacePath} />
-            ) : (
-              <SearchPanel onFileClick={handleFileSelect} rootPath={workspacePath} />
+            {/* kept mounted (just hidden) so expanded folders are remembered */}
+            <div style={{
+              display: layout.showSidebar ? 'block' : 'none',
+              width: layout.sidebarWidth, flexShrink: 0, height: '100%', overflow: 'hidden',
+            }}>
+              {activeSidebar === 'explorer' ? (
+                <FileExplorer key={workspacePath} onFileSelect={handleFileSelect} rootPath={workspacePath} />
+              ) : (
+                <SearchPanel onFileClick={handleFileSelect} rootPath={workspacePath} />
+              )}
+            </div>
+            {layout.showSidebar && (
+              <ResizeHandle direction="vertical" onResize={(d) => resizeBy('sidebarWidth', d)} />
             )}
           </div>
 
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, background: '#1e1e1e' }}>
+          {/* ---------- Main column: menu bar, tabs, editor, bottom panel ---------- */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, background: '#12141c' }}>
 
-            <div style={{ background: '#1e1e1e', padding: '8px', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative', borderBottom: '1px solid #333' }}>
+            <div style={{ background: '#12141c', padding: '8px', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative', borderBottom: '1px solid #262a38' }}>
               <div style={{ position: 'relative' }}>
                 <MenuItem label="File" active={showFileMenu} onClick={() => setShowFileMenu((prev) => !prev)} />
                 {showFileMenu && (
@@ -555,15 +595,15 @@ function App() {
                     <div onClick={() => setShowFileMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
                     <div style={{
                       position: 'absolute', top: '100%', left: 0, marginTop: '4px',
-                      background: '#252526', border: '1px solid #454545', borderRadius: '4px',
+                      background: '#171a24', border: '1px solid #262a38', borderRadius: '4px',
                       zIndex: 100, minWidth: '220px', padding: '4px 0', boxShadow: '0 4px 10px rgba(0,0,0,0.4)'
                     }}>
                       <DropdownItem label="Open File..." shortcut="Ctrl+O" onClick={() => { setShowFileMenu(false); handleOpenFile(); }} />
                       <DropdownItem label="Open Folder..." shortcut="" onClick={() => { setShowFileMenu(false); handleOpenFolder(); }} />
-                      <div style={{ borderTop: '1px solid #454545', margin: '4px 0' }} />
+                      <div style={{ borderTop: '1px solid #262a38', margin: '4px 0' }} />
                       <DropdownItem label="Save" shortcut="Ctrl+S" onClick={() => { setShowFileMenu(false); handleSave(); }} />
                       <DropdownItem label="Save As..." shortcut="Ctrl+Shift+S" onClick={() => { setShowFileMenu(false); handleSaveAs(); }} />
-                      <div style={{ borderTop: '1px solid #454545', margin: '4px 0' }} />
+                      <div style={{ borderTop: '1px solid #262a38', margin: '4px 0' }} />
                       <DropdownItem label="Close Folder" shortcut="" onClick={() => { setShowFileMenu(false); handleCloseFolder(); }} />
                     </div>
                   </>
@@ -575,6 +615,8 @@ function App() {
 
               <h3 style={{ color: 'white', margin: '0 0 0 12px', fontSize: '15px' }}>AI-Powered IDE</h3>
 
+              <MenuItem label="AI Chat" active={layout.showChat} onClick={() => toggleLayout('showChat')} />
+
               <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <span style={{ color: '#f66', fontSize: '13px' }}>{status}</span>
                 <span
@@ -585,11 +627,15 @@ function App() {
                   <span>⊗ {errorCount}</span>
                   <span>⚠ {warningCount}</span>
                 </span>
+                <LayoutToggles
+                  layout={{ ...layout, showPanel: isTerminalOpen }}
+                  toggle={(key) => (key === 'showPanel' ? togglePanel() : toggleLayout(key))}
+                />
               </div>
             </div>
 
             {openFiles.length > 0 && (
-              <div style={{ display: 'flex', background: '#252526', borderBottom: '1px solid #333', overflowX: 'auto', flexShrink: 0 }}>
+              <div style={{ display: 'flex', background: '#171a24', borderBottom: '1px solid #262a38', overflowX: 'auto', flexShrink: 0 }}>
                 {openFiles.map((f) => (
                   <div
                     key={f.path}
@@ -598,9 +644,9 @@ function App() {
                     style={{
                       display: 'flex', alignItems: 'center', gap: '8px',
                       padding: '8px 10px', cursor: 'pointer',
-                      background: activeFile === f.path ? '#1e1e1e' : 'transparent',
-                      borderRight: '1px solid #333',
-                      borderTop: activeFile === f.path ? '2px solid #007acc' : '2px solid transparent',
+                      background: activeFile === f.path ? '#12141c' : 'transparent',
+                      borderRight: '1px solid #262a38',
+                      borderTop: activeFile === f.path ? '2px solid #6d5ef5' : '2px solid transparent',
                       color: activeFile === f.path ? '#fff' : '#999',
                       fontSize: '13px',
                       whiteSpace: 'nowrap',
@@ -634,6 +680,7 @@ function App() {
                     language={activeTab.language}
                     value={activeTab.content}
                     onChange={handleCodeChange}
+                    beforeMount={defineIdeTheme}
                     onMount={(editor) => { editorRef.current = editor; }}
                     onValidate={setMarkers}
                     theme={editorTheme}
@@ -642,6 +689,7 @@ function App() {
                       wordWrap: editorPrefs.wordWrap ? 'on' : 'off',
                       tabSize: editorPrefs.tabSize,
                       minimap: { enabled: editorPrefs.minimap },
+                      automaticLayout: true,
                     }}
                   />
                 ) : (
@@ -651,12 +699,16 @@ function App() {
                 )}
               </div>
 
+              {panelMounted && isTerminalOpen && !isTerminalMaximized && (
+                <ResizeHandle direction="horizontal" onResize={(d) => resizeBy('panelHeight', -d)} />
+              )}
+
               {panelMounted && (
                 <div
                   style={{
                     display: isTerminalOpen ? 'block' : 'none',
                     height: terminalHeight,
-                    borderTop: '2px solid #333',
+                    borderTop: isTerminalMaximized ? '2px solid #262a38' : 'none',
                     width: '100%',
                     flexShrink: 0,
                   }}
@@ -670,10 +722,30 @@ function App() {
                     onProblemClick={handleProblemClick}
                     logs={logs}
                     onClearLogs={() => setLogs([])}
+                    cwd={workspacePath}
                   />
                 </div>
               )}
             </div>
+          </div>
+
+          {/* ---------- Secondary side bar: AI panel (full height, resizable) ---------- */}
+          {layout.showChat && (
+            <ResizeHandle direction="vertical" onResize={(d) => resizeBy('chatWidth', -d)} />
+          )}
+          {/* kept mounted (just hidden) so the conversation is not lost when toggled */}
+          <div style={{
+            display: layout.showChat ? 'flex' : 'none',
+            flexDirection: 'column',
+            width: layout.chatWidth, minWidth: 0, flexShrink: 0, height: '100%', overflow: 'hidden',
+          }}>
+            <ChatPanel
+              model={selectedModel}
+              onModelChange={setSelectedModel}
+              onClose={() => toggleLayout('showChat')}
+              openFiles={openFiles}
+              activeFile={activeTab}
+            />
           </div>
         </>
       )}
@@ -684,7 +756,7 @@ function App() {
           background: 'rgba(0,0,0,0.6)', display: 'flex',
           alignItems: 'center', justifyContent: 'center', zIndex: 1000
         }}>
-          <div style={{ background: '#252526', padding: '20px', borderRadius: '8px', width: '400px', color: '#ccc' }}>
+          <div style={{ background: '#171a24', padding: '20px', borderRadius: '8px', width: '400px', color: '#ccc' }}>
             <h3 style={{ marginTop: 0, color: 'white' }}>Save As</h3>
             <input
               autoFocus
@@ -705,7 +777,7 @@ function App() {
         <Settings
           onClose={() => setShowSettings(false)}
           onApply={({ theme, fontSize, wordWrap, tabSize, minimap, shortcuts: newShortcuts }) => {
-            setEditorTheme(theme === 'dark' ? 'vs-dark' : 'vs');
+            setEditorTheme(theme === 'dark' ? 'ide-dark' : 'vs');
             setFontSize(fontSize);
             setEditorPrefs({ wordWrap, tabSize, minimap });
             setShortcuts(newShortcuts);
