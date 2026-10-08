@@ -54,7 +54,7 @@ export default function WelcomeScreen({ onOpenFolder, onOpenRecent, onOpenFile }
   const visibleRecent = showAllRecent ? recent : recent.slice(0, 5);
 
   const linkStyle = {
-    color: '#4fc1ff',
+    color: '#a99dff',
     fontSize: '13px',
     cursor: 'pointer',
     display: 'block',
@@ -75,31 +75,31 @@ export default function WelcomeScreen({ onOpenFolder, onOpenRecent, onOpenFile }
   return (
     <div style={{
       flex: 1, display: 'flex', flexDirection: 'column',
-      background: '#1e1e1e', color: '#ccc', height: '100%', overflowY: 'auto',
+      background: '#12141c', color: '#ccc', height: '100%', overflowY: 'auto',
     }}>
       <div style={{ maxWidth: '920px', width: '100%', margin: '0 auto', padding: '64px 48px 24px 48px', flex: 1 }}>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '56px' }}>
           <div style={{
-  width: '52px', height: '52px', borderRadius: '10px',
-  background: 'linear-gradient(135deg, #1e3a5f, #0e639c)',
-  display: 'flex', alignItems: 'center', justifyContent: 'center',
-}}>
-  <svg width="30" height="30" viewBox="0 0 24 24" fill="none">
-    <path
-      d="M15.5 3.5c-4.5 0-8.2 3.7-8.2 8.2 0 4.5 3.7 8.2 8.2 8.2 1.8 0 3.5-.6 4.8-1.6-.5.1-1 .1-1.5.1-4.5 0-8.2-3.7-8.2-8.2 0-3 1.7-5.7 4.1-7.1-1-.4-2.1-.6-3.2-.6z"
-      fill="#e8f0fe"
-    />
-    <path
-      d="M4 8.5l.9 2 2 .9-2 .9-.9 2-.9-2-2-.9 2-.9.9-2z"
-      fill="#4fc1ff"
-    />
-    <path
-      d="M18.5 15l.6 1.3 1.3.6-1.3.6-.6 1.3-.6-1.3-1.3-.6 1.3-.6.6-1.3z"
-      fill="#4fc1ff"
-    />
-  </svg>
-</div>
+            width: '52px', height: '52px', borderRadius: '10px',
+            background: 'linear-gradient(135deg, #2a2650, #6d5ef5)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M15.5 3.5c-4.5 0-8.2 3.7-8.2 8.2 0 4.5 3.7 8.2 8.2 8.2 1.8 0 3.5-.6 4.8-1.6-.5.1-1 .1-1.5.1-4.5 0-8.2-3.7-8.2-8.2 0-3 1.7-5.7 4.1-7.1-1-.4-2.1-.6-3.2-.6z"
+                fill="#e8f0fe"
+              />
+              <path
+                d="M4 8.5l.9 2 2 .9-2 .9-.9 2-.9-2-2-.9 2-.9.9-2z"
+                fill="#a99dff"
+              />
+              <path
+                d="M18.5 15l.6 1.3 1.3.6-1.3.6-.6 1.3-.6-1.3-1.3-.6 1.3-.6.6-1.3z"
+                fill="#a99dff"
+              />
+            </svg>
+          </div>
           <div>
             <h1 style={{ color: 'white', fontSize: '26px', fontWeight: 400, margin: 0 }}>
               AI-Powered IDE
@@ -143,7 +143,7 @@ export default function WelcomeScreen({ onOpenFolder, onOpenRecent, onOpenFile }
                     }}
                   >
                     <span
-                      style={{ color: '#4fc1ff', fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                      style={{ color: '#a99dff', fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                       onMouseEnter={linkHoverOn}
                       onMouseLeave={linkHoverOff}
                     >
@@ -178,7 +178,7 @@ export default function WelcomeScreen({ onOpenFolder, onOpenRecent, onOpenFile }
           <div style={{ flex: 1, minWidth: 0 }}>
             <h3 style={sectionTitle}>Walkthroughs</h3>
             <div style={{
-              border: '1px solid #333', borderRadius: '6px', padding: '16px', marginBottom: '24px',
+              border: '1px solid #262a38', borderRadius: '6px', padding: '16px', marginBottom: '24px',
             }}>
               <div style={{ color: '#fff', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
                 Get Started with AI-Powered IDE
@@ -186,8 +186,8 @@ export default function WelcomeScreen({ onOpenFolder, onOpenRecent, onOpenFile }
               <div style={{ color: '#888', fontSize: '12px', marginBottom: '10px' }}>
                 Open a folder, edit and save files, run the terminal, and search across your project.
               </div>
-              <div style={{ height: '4px', background: '#333', borderRadius: '2px', overflow: 'hidden' }}>
-                <div style={{ width: '0%', height: '100%', background: '#0e639c' }} />
+              <div style={{ height: '4px', background: '#262a38', borderRadius: '2px', overflow: 'hidden' }}>
+                <div style={{ width: '0%', height: '100%', background: '#6d5ef5' }} />
               </div>
             </div>
 
@@ -205,7 +205,7 @@ export default function WelcomeScreen({ onOpenFolder, onOpenRecent, onOpenFile }
         </div>
       </div>
 
-      <div style={{ padding: '16px 48px', borderTop: '1px solid #2a2a2a' }}>
+      <div style={{ padding: '16px 48px', borderTop: '1px solid #262a38' }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#ccc', fontSize: '13px', cursor: 'pointer' }}>
           <input type="checkbox" checked={showOnStartup} onChange={toggleShowOnStartup} />
           Show welcome page on startup

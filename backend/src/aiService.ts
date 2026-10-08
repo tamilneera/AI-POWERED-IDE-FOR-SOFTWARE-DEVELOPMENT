@@ -10,7 +10,7 @@ async function chatWithOllama(model: string, messages: ChatMessage[]): Promise<s
     const res = await fetch('http://localhost:11434/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, messages, stream: false }),
+        body: JSON.stringify({ model, messages, stream: false, keep_alive: '30m' }),
     });
     const data: any = await res.json();
     if (!res.ok) throw new Error(data.error || 'Ollama request failed — is Ollama running?');
