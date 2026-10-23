@@ -14,6 +14,29 @@ export const C = {
 
 // Monaco editor theme — use: <Editor beforeMount={defineIdeTheme} theme="ide-dark" ... />
 export function defineIdeTheme(monaco) {
+    // Make sure JavaScript / TypeScript syntax errors get red underlines (and show in the Problems panel).
+    // Python has no built-in checker in Monaco, so only the AI chat can find Python errors.
+    try {
+        const ts = monaco.languages.typescript || monaco.typescript;
+        if (ts) {
+            const diag = { noSyntaxValidation: false, noSemanticValidation: false, noSuggestionDiagnostics: false };
+            ts.javascriptDefaults.setDiagnosticsOptions(diag);
+            ts.typescriptDefaults.setDiagnosticsOptions(diag);
+            const opts = {
+                allowNonTsExtensions: true,
+                allowJs: true,
+                checkJs: true,
+                target: ts.ScriptTarget.ESNext,
+                module: ts.ModuleKind.ESNext,
+                jsx: ts.JsxEmit.Preserve,
+            };
+            ts.javascriptDefaults.setCompilerOptions(opts);
+            ts.typescriptDefaults.setCompilerOptions(opts);
+        }
+    } catch (err) {
+        console.warn('Could not configure editor diagnostics:', err);
+    }
+
     monaco.editor.defineTheme('ide-dark', {
         base: 'vs-dark',
         inherit: true,

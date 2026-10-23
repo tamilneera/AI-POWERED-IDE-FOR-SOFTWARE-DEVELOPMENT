@@ -3,21 +3,22 @@ import { BACKEND_URL } from '../config';
 import ModelSelector from './ModelSelector';
 import { C } from '../theme';
 
-const MAX_FILE_CHARS = 40000; // keeps local models from choking on huge files
+const MAX_FILE_CHARS = 4000; // keeps local models from choking on huge files
+
+// The AI always behaves like a coding partner: explain code, find and fix errors, answer questions.
+const SYSTEM_PROMPT = `You are a coding assistant inside an IDE, helping a student. Use only facts from the code given; do not mention keywords or languages that are not in it.
+When given code, first check it line by line for real errors (missing colon, bracket, quote, value, typos, bugs). Then answer in ONE of two ways:
+A) NO errors: write "No problems found." then explain what the code does, step by step, in simple words. Do NOT show fixed code.
+B) Errors found: list each error with its line, then give exactly ONE code block with the corrected code (it must differ from the original; if a value is missing add a placeholder such as 0), then one line saying what changed. If the user selected code, fix only the selection; otherwise give the full file.
+For other questions, answer briefly with a short example. Use any file or errors given below only when relevant. Keep the whole answer under 150 words.`;
 const ASSISTANT_NAME = 'AI Assistant'; // change this one line to rename the panel
 
-const MODES = [
-  { id: 'auto', label: 'Auto', hint: '' },
-  { id: 'explain', label: 'Explain', hint: 'Explain the attached code clearly, step by step, in simple language.' },
-  { id: 'fix', label: 'Fix bugs', hint: 'Find bugs in the attached code and show the corrected code.' },
-  { id: 'tests', label: 'Add tests', hint: 'Write unit tests for the attached code.' },
-];
-
 const SCOPES = [
-  { id: 'none', label: 'No auto-context' },
+  { id: 'none', label: 'No file' },
   { id: 'active', label: 'Active file' },
   { id: 'open', label: 'Open files' },
 ];
+
 
 const pillStyle = {
   display: 'flex', alignItems: 'center', gap: '4px',
@@ -35,10 +36,6 @@ const menuStyle = {
 const menuItemStyle = {
   display: 'flex', alignItems: 'center', gap: '8px',
   padding: '8px 12px', fontSize: '12px', cursor: 'pointer', color: '#d5d8e8',
-};
-
-const actionLinkStyle = {
-  color: C.muted, fontSize: '11px', cursor: 'pointer', marginTop: '4px', userSelect: 'none',
 };
 
 function hover(e, on) {
@@ -77,19 +74,35 @@ function PillMenu({ value, options, onChange, title }) {
 }
 
 // Renders ```code``` blocks nicely; everything else stays plain text
-function renderContent(text) {
+function renderContent(text, onApply) {
+  let blockNo = -1;
   return text.split('```').map((part, i) => {
     if (i % 2 === 1) {
+      blockNo += 1;
       const nl = part.indexOf('\n');
-      const code = nl >= 0 ? part.slice(nl + 1) : part;
+      const code = (nl >= 0 ? part.slice(nl + 1) : part).replace(/\n+$/, '');
       return (
-        <pre key={i} style={{
-          background: '#0d0f16', border: `1px solid ${C.border}`, borderRadius: '6px',
-          padding: '8px 10px', margin: '6px 0', overflowX: 'auto',
-          fontSize: '12px', fontFamily: 'Consolas, monospace', color: '#d6dcff',
-        }}>
-          <code>{code}</code>
-        </pre>
+        <div key={i} style={{ margin: '6px 0' }}>
+          {onApply && (
+            <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', marginBottom: '3px' }}>
+              <span
+                onClick={() => { try { navigator.clipboard.writeText(code); } catch { /* ignore */ } }}
+                style={{ ...pillStyle, padding: '2px 8px', fontSize: '10px' }}
+              >Copy</span>
+              <span
+                onClick={() => onApply(code)}
+                style={{ ...pillStyle, padding: '2px 8px', fontSize: '10px', color: '#fff', background: C.accent, borderColor: C.accent }}
+              >Apply to editor</span>
+            </div>
+          )}
+          <pre style={{
+            background: '#0d0f16', border: `1px solid ${C.border}`, borderRadius: '6px',
+            padding: '8px 10px', margin: 0, overflowX: 'auto',
+            fontSize: '12px', fontFamily: 'Consolas, monospace', color: '#d6dcff', whiteSpace: 'pre',
+          }}>
+            <code>{code}</code>
+          </pre>
+        </div>
       );
     }
     return <span key={i}>{part}</span>;
@@ -98,18 +111,28 @@ function renderContent(text) {
 
 const getFileName = (path) => path.split(/[\\/]/).pop();
 
-function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile = null }) {
-  const [messages, setMessages] = useState([]); // [{ role, content, files?, ctx?, hint?, isError? }]
+// code blocks inside an AI reply -> plain code strings
+function extractCodeBlocks(text) {
+  return text.split('```').filter((_, i) => i % 2 === 1).map(part => {
+    const nl = part.indexOf('\n');
+    return (nl >= 0 ? part.slice(nl + 1) : part).replace(/\n+$/, '');
+  });
+}
+
+const FIX_INTENT = /\b(fix|correct|repair|solve|resolve|debug|rewrite)\b/i;
+const lineCount = (t) => (t || '').split('\n').length;
+
+function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile = null, getEditorContext, onApplyCode, onUndoCode }) {
+  const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState('chat');
-  const [mode, setMode] = useState('auto');
-  const [scope, setScope] = useState('none');
+  const [scope, setScope] = useState('active');
   const [attachments, setAttachments] = useState([]); // manual: [{ path, name, content, language }]
   const [showAttachMenu, setShowAttachMenu] = useState(false);
-  const [editingIndex, setEditingIndex] = useState(null);
-  const [editText, setEditText] = useState('');
   const endRef = useRef(null);
+  const activeFileRef = useRef(activeFile);
+  activeFileRef.current = activeFile; // always the latest open file, even inside async code
 
   useEffect(() => {
     endRef.current?.scrollIntoView();
@@ -150,15 +173,8 @@ function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile =
       const data = await res.json();
       addAttachment({ path: filePath, name: getFileName(filePath), content: data.content || '', language: '' });
     } catch (err) {
-      setMessages(prev => [...prev, { role: 'assistant', content: 'Could not read file: ' + err.message, isError: true }]);
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Could not read file: ' + err.message }]);
     }
-  };
-
-  const explainCurrentFile = () => {
-    if (!activeFile) return;
-    attachActive();
-    setMode('explain');
-    setInput('Explain this file');
   };
 
   // everything that will go to the AI with the next message
@@ -174,18 +190,70 @@ function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile =
     return [...map.values()];
   };
 
-  // ---------- talking to the backend ----------
-  // Takes the full chat history (ending with a user message) and appends the AI reply or a visible error.
-  // The files and mode used are read from the last user message, so Retry and Edit reuse them.
-  const requestReply = async (history) => {
+  // ---------- apply an AI fix to the editor ----------
+  // msgIndex: which chat message; code: the corrected code; auto: true when applied without a click;
+  // meta: { filePath, selectionRange } remembered when the question was asked
+  const applyFix = (msgIndex, code, auto, meta) => {
+    const cur = activeFileRef.current;
+    let note = null;
+    let ok = false;
+    if (!meta || !meta.filePath) {
+      note = 'No file was attached to that question, so there is nothing to apply it to.';
+    } else if (!cur || cur.path !== meta.filePath) {
+      note = `Open ${getFileName(meta.filePath)} in the editor first, then press Apply.`;
+    } else {
+      ok = !!(onApplyCode && onApplyCode({ code, range: meta.selectionRange || null }));
+      if (!ok) note = 'Could not reach the editor.';
+    }
+    setMessages(prev => prev.map((x, i) => i === msgIndex
+      ? { ...x, applied: ok, applyNote: ok ? (auto ? 'auto' : 'manual') : note }
+      : x));
+  };
+
+  const undoFix = (msgIndex) => {
+    if (onUndoCode) onUndoCode();
+    setMessages(prev => prev.map((x, i) => i === msgIndex ? { ...x, applied: false, applyNote: 'undone' } : x));
+  };
+
+  // ---------- send ----------
+  const send = async () => {
+    if (!input.trim() || !model || loading) return;
+
+    // what the editor knows right now: selected text + errors/warnings
+    let ctx = { selection: '', problems: [] };
+    if (scope !== 'none') {
+      try { ctx = (getEditorContext && getEditorContext()) || ctx; } catch { /* ignore */ }
+    }
+
+    // With a selection, send ONLY the selected code (not the whole file too) - much faster for local models.
+    // Files attached with + are always sent.
+    const allFiles = buildContextFiles();
+    const files = ctx.selection ? allFiles.filter(f => attachments.some(a => a.path === f.path)) : allFiles;
+    const names = files.map(f => f.name || getFileName(f.path));
+    if (ctx.selection && activeFileRef.current) {
+      names.unshift(`selection in ${activeFileRef.current.name || getFileName(activeFileRef.current.path)}`);
+    }
+
+    const userMsg = { role: 'user', content: input, files: names };
+    const askedFix = FIX_INTENT.test(input);
+    const askedFile = activeFileRef.current;
+    const newMessages = [...messages, userMsg];
+    setMessages(newMessages);
+    setInput('');
+    setAttachments([]);
     setLoading(true);
 
-    const lastUser = [...history].reverse().find(m => m.role === 'user');
-    const files = lastUser?.ctx || [];
-    const modeHint = lastUser?.hint || '';
-
-    const parts = [];
-    if (modeHint) parts.push(modeHint);
+    const selectionRange = ctx.selection ? (ctx.range || null) : null;
+    const parts = [SYSTEM_PROMPT];
+    if (ctx.selection) {
+      parts.push(`The user has this code SELECTED in the editor (file: ${activeFile ? (activeFile.name || getFileName(activeFile.path)) : 'unknown'}):\n\`\`\`\n${ctx.selection.slice(0, MAX_FILE_CHARS)}\n\`\`\``);
+    }
+    if (ctx.problems && ctx.problems.length > 0) {
+      const list = ctx.problems.slice(0, 15)
+        .map(p => `- ${p.severity === 8 ? 'ERROR' : 'WARNING'} at line ${p.line}, column ${p.column}: ${p.message}`)
+        .join('\n');
+      parts.push(`The IDE reports these problems in the active file (${activeFile ? (activeFile.name || getFileName(activeFile.path)) : 'unknown'}):\n${list}`);
+    }
     files.forEach(f => {
       const content = (f.content || '').length > MAX_FILE_CHARS
         ? f.content.slice(0, MAX_FILE_CHARS) + '\n... [file truncated]'
@@ -193,15 +261,15 @@ function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile =
       parts.push(`File: ${f.path}\n\`\`\`${f.language || ''}\n${content}\n\`\`\``);
     });
 
-    const cleanMessages = history
-      .filter(m => !m.isError)
-      .map(({ role, content }) => ({ role, content }));
-    const requestMessages = parts.length
-      ? [{ role: 'system', content: parts.join('\n\n') }, ...cleanMessages]
-      : cleanMessages;
+    const cleanMessages = newMessages.slice(-6).map(({ role, content }) => ({ role, content })); // last 6 only: small models have a small context window
+    const requestMessages = [{ role: 'system', content: parts.join('\n\n') }, ...cleanMessages];
+
+    const sentChars = JSON.stringify(requestMessages).length;
+    const t0 = Date.now();
+    console.log(`[AI chat] sending to ${model.provider}:${model.model} - ${sentChars} characters, ${requestMessages.length} messages`);
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 180000);
+    const timeout = setTimeout(() => controller.abort(), 300000);
 
     try {
       const res = await fetch(`${BACKEND_URL}/api/ai/chat`, {
@@ -216,71 +284,42 @@ function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile =
       });
       clearTimeout(timeout);
       const data = await res.json();
+      console.log(`[AI chat] answered in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
       if (data.reply) {
-        setMessages([...history, { role: 'assistant', content: data.reply }]);
+        const reply = data.reply;
+        const blocks = extractCodeBlocks(reply);
+        const fixCode = blocks.length ? blocks[blocks.length - 1] : '';
+        // the message goes at index newMessages.length (user message is at newMessages.length - 1)
+        const msgIndex = newMessages.length;
+        setMessages(prev => [...prev, {
+          role: 'assistant', content: reply,
+          filePath: askedFile ? askedFile.path : null,
+          selectionRange,
+        }]);
+
+        // "fix this" -> apply automatically, but only when it is clearly safe:
+        //  - a selection was fixed, or
+        //  - the code block looks like the whole file (not a small snippet)
+        if (askedFix && fixCode && askedFile) {
+          const fileLines = lineCount(askedFile.content);
+          const looksComplete = selectionRange || fileLines <= 6 || lineCount(fixCode) >= fileLines * 0.6;
+          if (looksComplete && fixCode.trim() !== (askedFile.content || '').trim()) {
+            setTimeout(() => applyFix(msgIndex, fixCode, true, { filePath: askedFile.path, selectionRange }), 0);
+          }
+        }
       } else {
-        setMessages([...history, { role: 'assistant', content: 'Error: ' + (data.error || 'no reply'), isError: true }]);
+        setMessages(prev => [...prev, { role: 'assistant', content: 'Error: ' + (data.error || 'no reply') }]);
       }
     } catch (err) {
       clearTimeout(timeout);
       const msg = err.name === 'AbortError'
-        ? 'Request timed out — the model may still be loading. Press Retry.'
+        ? `No answer after 5 minutes (model: ${model.model}, sent ${sentChars} characters). Run "ollama ps" to check the model is loaded, and try a smaller selection.`
         : err.message;
-      setMessages([...history, { role: 'assistant', content: 'Error: ' + msg, isError: true }]);
+      console.log(`[AI chat] failed after ${((Date.now() - t0) / 1000).toFixed(1)}s:`, err.name, err.message);
+      setMessages(prev => [...prev, { role: 'assistant', content: 'Error: ' + msg }]);
     } finally {
       setLoading(false);
     }
-  };
-
-  // ---------- send / retry / edit ----------
-  const send = () => {
-    if (!input.trim() || !model || loading) return;
-
-    const files = buildContextFiles();
-    const hint = MODES.find(m => m.id === mode)?.hint || '';
-
-    const userMsg = {
-      role: 'user',
-      content: input,
-      files: files.map(f => f.name || getFileName(f.path)), // shown under the bubble
-      ctx: files,                                           // used again on Retry / Edit
-      hint,
-    };
-    const history = [...messages, userMsg];
-    setMessages(history);
-    setInput('');
-    setAttachments([]);
-    requestReply(history);
-  };
-
-  // Retry: drop everything after the last user message and ask again
-  const retry = () => {
-    if (loading || !model) return;
-    let lastUser = -1;
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === 'user') { lastUser = i; break; }
-    }
-    if (lastUser === -1) return;
-    const history = messages.slice(0, lastUser + 1);
-    setMessages(history);
-    requestReply(history);
-  };
-
-  const startEdit = (index) => {
-    if (loading) return;
-    setEditingIndex(index);
-    setEditText(messages[index].content);
-  };
-
-  // Save edit: cut the chat back to before this message, replace its text, ask again
-  const saveEdit = () => {
-    const text = editText.trim();
-    if (!text || loading || !model) return;
-    const edited = { ...messages[editingIndex], content: text };
-    const history = [...messages.slice(0, editingIndex), edited];
-    setMessages(history);
-    setEditingIndex(null);
-    requestReply(history);
   };
 
   const handleKeyDown = (e) => {
@@ -292,7 +331,6 @@ function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile =
 
   const contextFiles = buildContextFiles();
   const canSend = model && !loading && input.trim();
-  const lastIndex = messages.length - 1;
 
   const tabs = [
     { id: 'chat', label: 'Chat', icon: '💬', enabled: true },
@@ -350,88 +388,46 @@ function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile =
           <>
             {messages.length === 0 && (
               <div style={{ color: C.muted, fontSize: '12px', lineHeight: 1.7 }}>
-                Ask anything about your code. Use <b style={{ color: '#a99dff' }}>+</b> to attach the file open in the
-                editor, other open files, or any file from your computer. You can edit your messages and retry answers.
-                {activeFile && (
-                  <div style={{ marginTop: '12px' }}>
-                    <span
-                      onClick={explainCurrentFile}
-                      style={{ ...pillStyle, display: 'inline-flex', color: '#a99dff', borderColor: C.accent }}
-                    >
-                      ✦ Explain {activeFile.name || getFileName(activeFile.path)}
-                    </span>
+                Paste code or just ask. I'll explain it, find the bugs and show the fix. The file open in the editor,
+                your selected text and the editor's errors are included automatically. Use <b style={{ color: '#a99dff' }}>+</b> to
+                attach other files.
+              </div>
+            )}
+            {messages.map((m, i) => (
+              <div key={i} style={{
+                marginBottom: '14px', display: 'flex', flexDirection: 'column',
+                alignItems: m.role === 'user' ? 'flex-end' : 'flex-start',
+              }}>
+                <div style={{
+                  maxWidth: '90%',
+                  background: m.role === 'user' ? C.accentSoft : C.panel,
+                  border: `1px solid ${m.role === 'user' ? '#3a3480' : C.border}`,
+                  color: C.text, padding: '9px 12px', borderRadius: '12px',
+                  whiteSpace: 'pre-wrap', lineHeight: 1.55, wordBreak: 'break-word',
+                }}>
+                  {renderContent(m.content, m.role === 'assistant' && !m.content.startsWith('Error:')
+                    ? (code) => applyFix(i, code, false, m) : null)}
+                </div>
+                {m.role === 'assistant' && (m.applied || m.applyNote) && (
+                  <div style={{ fontSize: '11px', marginTop: '4px', color: m.applied ? '#7ee2a8' : C.muted }}>
+                    {m.applied && (
+                      <>
+                        ✓ {m.applyNote === 'auto' ? 'Fix applied to the editor' : 'Applied to the editor'}. Press Ctrl+S to save.{' '}
+                        <span onClick={() => undoFix(i)} style={{ color: '#a99dff', cursor: 'pointer', textDecoration: 'underline' }}>Undo</span>
+                      </>
+                    )}
+                    {!m.applied && m.applyNote === 'undone' && 'Undone.'}
+                    {!m.applied && m.applyNote && m.applyNote !== 'undone' && m.applyNote !== 'auto' && m.applyNote !== 'manual' && m.applyNote}
+                  </div>
+                )}
+                {m.files && m.files.length > 0 && (
+                  <div style={{ color: C.muted, fontSize: '10px', marginTop: '4px' }}>
+                    📎 {m.files.join(', ')}
                   </div>
                 )}
               </div>
-            )}
-
-            {messages.map((m, i) => {
-              const isUser = m.role === 'user';
-              const isEditing = editingIndex === i;
-              return (
-                <div key={i} style={{
-                  marginBottom: '14px', display: 'flex', flexDirection: 'column',
-                  alignItems: isUser ? 'flex-end' : 'flex-start',
-                }}>
-                  {isEditing ? (
-                    <div style={{ width: '100%' }}>
-                      <textarea
-                        autoFocus
-                        value={editText}
-                        onChange={(e) => setEditText(e.target.value)}
-                        rows={3}
-                        style={{
-                          width: '100%', padding: '8px', fontSize: '13px', boxSizing: 'border-box',
-                          background: C.panel, border: `1px solid ${C.accent}`, borderRadius: '10px',
-                          color: C.text, fontFamily: 'inherit', resize: 'vertical', outline: 'none',
-                        }}
-                      />
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px', marginTop: '6px' }}>
-                        <button
-                          onClick={() => setEditingIndex(null)}
-                          style={{
-                            padding: '4px 10px', fontSize: '12px', background: 'transparent',
-                            color: C.muted, border: `1px solid ${C.border}`, borderRadius: '6px', cursor: 'pointer',
-                          }}
-                        >Cancel</button>
-                        <button
-                          onClick={saveEdit}
-                          style={{
-                            padding: '4px 10px', fontSize: '12px', background: C.accent,
-                            color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer',
-                          }}
-                        >Send</button>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <div style={{
-                        maxWidth: '90%',
-                        background: isUser ? C.accentSoft : (m.isError ? '#3a1d24' : C.panel),
-                        border: `1px solid ${isUser ? '#3a3480' : (m.isError ? '#5a2a35' : C.border)}`,
-                        color: C.text, padding: '9px 12px', borderRadius: '12px',
-                        whiteSpace: 'pre-wrap', lineHeight: 1.55, wordBreak: 'break-word',
-                      }}>
-                        {renderContent(m.content)}
-                      </div>
-                      {m.files && m.files.length > 0 && (
-                        <div style={{ color: C.muted, fontSize: '10px', marginTop: '4px' }}>
-                          📎 {m.files.join(', ')}
-                        </div>
-                      )}
-                      {isUser && !loading && (
-                        <span onClick={() => startEdit(i)} style={actionLinkStyle}>✎ Edit</span>
-                      )}
-                      {!isUser && i === lastIndex && !loading && (
-                        <span onClick={retry} style={actionLinkStyle}>↻ Retry</span>
-                      )}
-                    </>
-                  )}
-                </div>
-              );
-            })}
-
-            {loading && <div style={{ color: C.muted, fontSize: '12px', fontStyle: 'italic' }}>Thinking…</div>}
+            ))}
+            {loading && <div style={{ color: C.muted, fontSize: '12px', fontStyle: 'italic' }}>Thinking… a local model on CPU can take a minute or two</div>}
             <div ref={endRef} />
           </>
         )}
@@ -558,8 +554,7 @@ function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile =
                 )}
               </div>
 
-              <PillMenu value={scope} options={SCOPES} onChange={setScope} title="What context is sent automatically" />
-              <PillMenu value={mode} options={MODES} onChange={setMode} title="What should the AI do" />
+              <PillMenu value={scope} options={SCOPES} onChange={setScope} title="Which file is sent with every message" />
               <ModelSelector selected={model} onSelect={onModelChange} />
             </div>
 

@@ -11,6 +11,7 @@ import authRoutes from './authRoutes';
 import 'dotenv/config';
 import aiRoutes from './aiRoutes';
 
+
 const app = express();
 app.use(cors());
 app.use(express.json());
