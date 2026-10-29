@@ -77,8 +77,52 @@ function PillMenu({ value, options, onChange, title }) {
   );
 }
 
-// Renders ```code``` blocks nicely; everything else stays plain text
-function renderContent(text, onApply) {
+// Turns **bold** and `code` inside one line of text into styled pieces
+function renderInline(text) {
+  const out = [];
+  const re = /(\*\*[^*\n]+\*\*|`[^`\n]+`)/g;
+  let last = 0, m, k = 0;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    const t = m[0];
+    if (t.startsWith('**')) {
+      out.push(<b key={k++} style={{ color: '#fff' }}>{t.slice(2, -2)}</b>);
+    } else {
+      out.push(
+        <code key={k++} style={{
+          background: '#0d0f16', border: `1px solid ${C.border}`, borderRadius: '4px',
+          padding: '0 4px', fontSize: '12px', fontFamily: 'Consolas, monospace', color: '#d6dcff',
+        }}>{t.slice(1, -1)}</code>
+      );
+    }
+    last = m.index + t.length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+// Plain AI text -> headings, bullet / numbered lists and paragraphs
+function renderText(text) {
+  return text.split('\n').map((line, i) => {
+    if (line.trim() === '') return <div key={i} style={{ height: '6px' }} />;
+    const h = line.match(/^#{1,4}\s+(.*)$/);
+    if (h) return <div key={i} style={{ fontWeight: 700, color: '#fff', margin: '6px 0 2px' }}>{renderInline(h[1])}</div>;
+    const li = line.match(/^\s*([-*•]|\d+[.)])\s+(.*)$/);
+    if (li) {
+      const marker = /\d/.test(li[1]) ? li[1] : '•';
+      return (
+        <div key={i} style={{ display: 'flex', gap: '8px', margin: '2px 0', paddingLeft: '4px' }}>
+          <span style={{ color: '#a99dff', minWidth: '16px' }}>{marker}</span>
+          <span style={{ flex: 1 }}>{renderInline(li[2])}</span>
+        </div>
+      );
+    }
+    return <div key={i} style={{ margin: '1px 0' }}>{renderInline(line)}</div>;
+  });
+}
+
+// Renders ```code``` blocks nicely; formatted=true also formats the normal text (AI answers)
+function renderContent(text, onApply, formatted) {
   let blockNo = -1;
   return text.split('```').map((part, i) => {
     if (i % 2 === 1) {
@@ -109,7 +153,7 @@ function renderContent(text, onApply) {
         </div>
       );
     }
-    return <span key={i}>{part}</span>;
+    return formatted ? <div key={i}>{renderText(part)}</div> : <span key={i}>{part}</span>;
   });
 }
 
@@ -478,10 +522,12 @@ function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile =
                     background: m.isError ? '#3a1d24' : (m.role === 'user' ? C.accentSoft : C.panel),
                     border: `1px solid ${m.isError ? '#5a2a35' : (m.role === 'user' ? '#3a3480' : C.border)}`,
                     color: C.text, padding: '9px 12px', borderRadius: '12px',
-                    whiteSpace: 'pre-wrap', lineHeight: 1.55, wordBreak: 'break-word',
+                    whiteSpace: m.role === 'assistant' && !m.isError ? 'normal' : 'pre-wrap',
+                    lineHeight: 1.55, wordBreak: 'break-word',
                   }}>
                     {renderContent(m.content, m.role === 'assistant' && !m.isError
-                      ? (code) => applyFix(i, code, false, m) : null)}
+                      ? (code) => applyFix(i, code, false, m) : null,
+                      m.role === 'assistant' && !m.isError)}
                   </div>
                 )}
                 {m.role === 'assistant' && (m.applied || m.applyNote) && (
