@@ -175,6 +175,43 @@ function App() {
   const errorCount = problems.filter(p => p.severity === 8).length;
   const warningCount = problems.filter(p => p.severity === 4).length;
 
+  // What the AI chat gets automatically with every message: selected text + the editor's errors/warnings
+  const getEditorContext = () => {
+    let selection = '';
+    const editor = editorRef.current;
+    if (editor) {
+      const sel = editor.getSelection();
+      if (sel && !sel.isEmpty()) selection = editor.getModel().getValueInRange(sel);
+    }
+    let range = null;
+    if (editor && selection) {
+      const r = editor.getSelection();
+      range = { startLineNumber: r.startLineNumber, startColumn: r.startColumn, endLineNumber: r.endLineNumber, endColumn: r.endColumn };
+    }
+    return {
+      selection,
+      range,
+      problems: problems.map(p => ({ severity: p.severity, line: p.line, column: p.column, message: p.message })),
+    };
+  };
+
+  // Put AI-written code into the editor (the selection if there was one, otherwise the whole file).
+  // It is a normal editor edit, so Ctrl+Z works and the tab shows the "M" mark until you save.
+  const applyToEditor = ({ code, range }) => {
+    const editor = editorRef.current;
+    const model = editor && editor.getModel();
+    if (!model) return false;
+    editor.pushUndoStop();
+    editor.executeEdits('ai-apply', [{ range: range || model.getFullModelRange(), text: code, forceMoveMarkers: true }]);
+    editor.pushUndoStop();
+    return true;
+  };
+
+  const undoEditorEdit = () => {
+    const editor = editorRef.current;
+    if (editor) { editor.focus(); editor.trigger('ai-apply', 'undo', null); }
+  };
+
   const handleProblemClick = (p) => {
     const editor = editorRef.current;
     if (!editor) return;
@@ -745,6 +782,9 @@ function App() {
               onClose={() => toggleLayout('showChat')}
               openFiles={openFiles}
               activeFile={activeTab}
+              getEditorContext={getEditorContext}
+              onApplyCode={applyToEditor}
+              onUndoCode={undoEditorEdit}
             />
           </div>
         </>
