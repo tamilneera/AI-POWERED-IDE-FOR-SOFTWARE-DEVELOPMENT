@@ -6,11 +6,21 @@ import { C } from '../theme';
 const MAX_FILE_CHARS = 4000; // keeps local models from choking on huge files
 
 // The AI always behaves like a coding partner: explain code, find and fix errors, answer questions.
-const SYSTEM_PROMPT = `You are a coding assistant inside an IDE, helping a student. Use only facts from the code given; do not mention keywords or languages that are not in it.
-When given code, first check it line by line for real errors (missing colon, bracket, quote, value, typos, bugs). Then answer in ONE of two ways:
+const SYSTEM_PROMPT = `You are a friendly, accurate coding assistant inside an IDE, helping a student. Only state facts you are sure about; if you are not sure, say so. Never invent facts.
+
+IMPORTANT: follow-up requests ("give me practice questions", "make it shorter", "explain more", "now do X") are about the PREVIOUS messages in this chat. An open file or error list below is only background: use it only when the user asks about their code, errors or file, or says "this code" / "my file". Otherwise ignore it.
+
+WHEN THE USER ASKS ABOUT CODE (pasted, selected, or an open file), first check it line by line for real errors (missing colon, bracket, quote, value, typos, bugs). Use only facts from the code; do not mention keywords or languages that are not in it. Then answer in ONE of two ways:
 A) NO errors: write "No problems found." then explain what the code does, step by step, in simple words. Do NOT show fixed code.
-B) Errors found: list each error with its line, then give exactly ONE code block with the corrected code (it must differ from the original; if a value is missing add a placeholder such as 0), then one line saying what changed. If the user selected code, fix only the selection; otherwise give the full file.
-For other questions, answer briefly with a short example. Use any file or errors given below only when relevant. Keep the whole answer under 150 words.`;
+B) Errors found: list each error with its line, then give exactly ONE code block with the corrected code (it must differ from the original; if a value is missing add a placeholder such as 0), then one line saying what changed. If the user selected code, fix only the selection; otherwise give the full file. Keep this under 150 words.
+
+WHEN THE USER ASKS A QUESTION (concepts, differences, how-to, write code, practice questions): answer clearly like a good teacher.
+- Start with a one-line direct answer.
+- For "difference" or "compare" questions, use a small markdown table (| Feature | A | B |), then a short code example.
+- For "explain" questions, use short bullet points, then a small example.
+- For "write code" requests, give ONE complete working code block, then one or two lines on how it works.
+- Add a short closing tip only if it genuinely helps; skip it otherwise.
+Use **bold** for key terms and \`backticks\` for code words. Be correct before being long: stay under 250 words.`;
 const ASSISTANT_NAME = 'AI Assistant'; // change this one line to rename the panel
 
 const SCOPES = [
@@ -101,24 +111,61 @@ function renderInline(text) {
   return out;
 }
 
-// Plain AI text -> headings, bullet / numbered lists and paragraphs
+// Markdown table lines ("| a | b |") -> a real table
+function renderTable(lines, key) {
+  const cells = (l) => l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+  const rows = lines.map(cells).filter(r => !r.every(c => /^:?-{2,}:?$/.test(c)));
+  if (rows.length === 0) return null;
+  const [head, ...body] = rows;
+  const cell = { border: `1px solid ${C.border}`, padding: '4px 8px', textAlign: 'left', verticalAlign: 'top' };
+  return (
+    <div key={key} style={{ overflowX: 'auto', margin: '6px 0' }}>
+      <table style={{ borderCollapse: 'collapse', fontSize: '12px', width: '100%' }}>
+        <thead>
+          <tr>{head.map((h, i) => <th key={i} style={{ ...cell, background: C.card, color: '#fff' }}>{renderInline(h)}</th>)}</tr>
+        </thead>
+        <tbody>
+          {body.map((r, ri) => (
+            <tr key={ri}>{r.map((c, ci) => <td key={ci} style={cell}>{renderInline(c)}</td>)}</tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// Plain AI text -> headings, bullet / numbered lists, tables and paragraphs
 function renderText(text) {
-  return text.split('\n').map((line, i) => {
-    if (line.trim() === '') return <div key={i} style={{ height: '6px' }} />;
+  const lines = text.split('\n');
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.trim() === '') { out.push(<div key={i} style={{ height: '6px' }} />); continue; }
+    if (line.trim().startsWith('|')) {
+      const group = [];
+      let j = i;
+      while (j < lines.length && lines[j].trim().startsWith('|')) { group.push(lines[j]); j++; }
+      const table = renderTable(group, i);
+      if (table) out.push(table);
+      i = j - 1;
+      continue;
+    }
     const h = line.match(/^#{1,4}\s+(.*)$/);
-    if (h) return <div key={i} style={{ fontWeight: 700, color: '#fff', margin: '6px 0 2px' }}>{renderInline(h[1])}</div>;
+    if (h) { out.push(<div key={i} style={{ fontWeight: 700, color: '#fff', margin: '6px 0 2px' }}>{renderInline(h[1])}</div>); continue; }
     const li = line.match(/^\s*([-*•]|\d+[.)])\s+(.*)$/);
     if (li) {
       const marker = /\d/.test(li[1]) ? li[1] : '•';
-      return (
+      out.push(
         <div key={i} style={{ display: 'flex', gap: '8px', margin: '2px 0', paddingLeft: '4px' }}>
           <span style={{ color: '#a99dff', minWidth: '16px' }}>{marker}</span>
           <span style={{ flex: 1 }}>{renderInline(li[2])}</span>
         </div>
       );
+      continue;
     }
-    return <div key={i} style={{ margin: '1px 0' }}>{renderInline(line)}</div>;
-  });
+    out.push(<div key={i} style={{ margin: '1px 0' }}>{renderInline(line)}</div>);
+  }
+  return out;
 }
 
 // Renders ```code``` blocks nicely; formatted=true also formats the normal text (AI answers)
@@ -170,7 +217,67 @@ function extractCodeBlocks(text) {
 const FIX_INTENT = /\b(fix|correct|repair|solve|resolve|debug|rewrite)\b/i;
 const lineCount = (t) => (t || '').split('\n').length;
 
-function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile = null, getEditorContext, onApplyCode, onUndoCode }) {
+// ---------- "create a whole project" mode ----------
+// When a folder is open and the user asks to create/build a project or app, the AI answers with every file,
+// and the chat shows a preview card with a Create button that writes the files into the open folder.
+// After that, "Run & fix" installs the packages, starts the app and lets the AI repair any errors.
+const PROJECT_INTENT = /\b(create|build|make|generate|scaffold|set\s*up|start)\b[\s\S]{0,60}\b(project|app|application|website|web\s*site|full[\s-]?stack|frontend|backend|api|server)\b/i;
+
+const PROJECT_PROMPT = `You are a senior full-stack developer inside an IDE. Create the project the user asks for as a complete, polished, working app (at most 10 files).
+Reply in exactly this format:
+1. One or two lines saying what you are building.
+2. Then EVERY file, each written as a line "FILE: relative/path" followed by a code block with the full content of that file. Example:
+FILE: server.js
+\`\`\`js
+console.log("hi");
+\`\`\`
+3. Finish with a short "How to run" list.
+
+ARCHITECTURE (always, unless the user asks for something else):
+- ONE Node project at the top level: package.json (scripts: "start": "node server.js"), server.js, README.md, and a public/ folder with index.html, styles.css and app.js.
+- server.js uses Express only (no other dependencies), serves the public/ folder with express.static, listens on process.env.PORT || 3001 (never 5000 or 3000), and prints "Server running on http://localhost:3001".
+- The page is plain HTML, CSS and JavaScript (no React, no build step, no CDN links, no external fonts). It calls the API with relative URLs like fetch("/api/todos").
+- Keep data in memory or a JSON file. Use string ids (crypto.randomUUID()).
+- Use EXACTLY the same field names in the server and in app.js. For lists use { id, title, completed }. Before finishing, check every field name and URL that app.js uses against server.js.
+- Register fixed routes (like DELETE /api/todos/completed) BEFORE parameter routes (like /api/todos/:id). Validate input and return { error: "message" } with a proper status code on bad requests.
+
+DESIGN (this is as important as the code):
+- Soft page background (#f7f7fb) with a faint radial purple glow, a centered white card (max width about 674px, radius 17px, soft shadow), system fonts only: "Segoe UI", sans-serif.
+- Colors: ink #242337, muted #89899b, accent purple #7866d6 (hover #6653c3), soft purple #f0edff, borders #efeff4. Use CSS variables.
+- Top bar with a small logo mark and app name, a friendly heading with the current date, a card title with a count badge, a completion ring (conic-gradient) and a thin progress bar.
+- Add-item form with a focus ring, filter buttons (All / To do / Done) with counts, a "Clear completed" button that only shows when needed.
+- List rows with custom checkboxes, strike-through for done items, edit and delete icon buttons that appear on hover, inline edit (Enter saves, Escape cancels).
+- A friendly empty state, an error message area, subtle 180ms transitions and a fade-in for new rows, visible focus styles, a responsive layout for phones, and prefers-reduced-motion support.
+- Escape all user text before putting it into innerHTML.
+For apps that are not a list (a calculator, notes, a dashboard), keep the same architecture and the same level of design polish.
+
+RULES: use relative paths only, never absolute paths and never "..". Write complete files, never snippets or "...". Do not output anything outside the format above.`;
+
+const MAX_PROJECT_FILES = 30;
+const MAX_PROJECT_FILE_CHARS = 100000;
+
+// keep only safe relative paths: no "..", no drive letters, no absolute paths
+function cleanProjectPath(p) {
+  const x = p.trim().replace(/\\/g, '/').replace(/^\.\//, '');
+  if (!x || x.startsWith('/') || /^[a-zA-Z]:/.test(x)) return null;
+  if (x.split('/').some(seg => seg === '' || seg === '.' || seg === '..')) return null;
+  if (/[<>:"|?*]/.test(x)) return null;
+  return x;
+}
+
+// "FILE: path" line + code block  ->  [{ path, content }]
+function parseProjectFiles(text) {
+  const re = /^[ \t]*(?:#{1,6}[ \t]*)?(?:\*\*)?FILE:[ \t]*`?([^\n`*]+?)`?(?:\*\*)?[ \t]*\n+```[^\n]*\n([\s\S]*?)\n```/gm;
+  const byPath = new Map();
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const rel = cleanProjectPath(m[1]);
+    if (rel && m[2].length <= MAX_PROJECT_FILE_CHARS) byPath.set(rel, { path: rel, content: m[2] });
+  }
+  return [...byPath.values()].slice(0, MAX_PROJECT_FILES);
+}
+
+function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile = null, getEditorContext, onApplyCode, onUndoCode, workspacePath = '' }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -265,6 +372,115 @@ function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile =
     setMessages(prev => prev.map((x, i) => i === msgIndex ? { ...x, applied: false, applyNote: 'undone' } : x));
   };
 
+  // ---------- create the generated project on disk ----------
+  const patchMessage = (index, patch) => {
+    setMessages(prev => prev.map((x, i) => i === index ? { ...x, ...patch } : x));
+  };
+
+  const addFixLog = (index, line) => {
+    setMessages(prev => prev.map((x, i) => i === index ? { ...x, fixLog: [...(x.fixLog || []), line] } : x));
+  };
+
+  const createProject = async (index) => {
+    const m = messages[index];
+    if (!m || !m.projectFiles || m.projectStatus === 'creating') return;
+    const root = (m.workspacePath || '').replace(/[\\/]+$/, '');
+    const name = (m.projectName || '').trim(); // empty = put the files straight into the open folder
+    if (!root) { patchMessage(index, { projectNote: 'Open a folder first (File → Open Folder).' }); return; }
+    if (name && (!/^[\w.-]+$/.test(name) || name === '.' || name === '..')) {
+      patchMessage(index, { projectNote: 'Sub-folder name: use only letters, numbers, - _ and . (or leave it empty).' });
+      return;
+    }
+
+    patchMessage(index, { projectStatus: 'creating', projectNote: '' });
+    const sep = root.includes('\\') ? '\\' : '/';
+    const full = (...segs) => [root, ...(name ? [name] : []), ...segs].join(sep);
+    const post = (url, body) => fetch(`${BACKEND_URL}${url}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+
+    // every folder, shallowest first: project folder, backend, backend/src, ...
+    const dirs = new Set(name ? [full()] : []); // the open folder already exists
+    m.projectFiles.forEach(f => {
+      const parts = f.path.split('/').slice(0, -1);
+      for (let i = 1; i <= parts.length; i++) dirs.add(full(...parts.slice(0, i)));
+    });
+
+    let mkdirProblem = '';
+    try {
+      for (const d of [...dirs].sort((a, b) => a.length - b.length)) {
+        try {
+          const r = await post('/api/files/mkdir', { path: d });
+          let data = {};
+          try { data = await r.json(); } catch { /* no JSON body */ }
+          if (!r.ok || data.success === false || data.error) {
+            mkdirProblem = `${d} -> ${data.error || ('HTTP ' + r.status)}`;
+            console.warn('[AI chat] could not create folder:', mkdirProblem);
+          }
+        } catch (e) {
+          mkdirProblem = `${d} -> ${e.message}`;
+          console.warn('[AI chat] could not create folder:', mkdirProblem);
+        }
+      }
+      let done = 0;
+      for (const f of m.projectFiles) {
+        const res = await post('/api/files/write', { path: full(...f.path.split('/')), content: f.content });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || `could not write ${f.path}`);
+        done += 1;
+      }
+      patchMessage(index, {
+        projectStatus: 'done',
+        projectRoot: full(),
+        projectNote: `Created ${done} files in ${name ? name + '/' : 'the open folder'}. Check the Explorer (press refresh if it has not updated).`,
+      });
+    } catch (err) {
+      patchMessage(index, { projectStatus: 'ready', projectNote: 'Failed: ' + err.message + (mkdirProblem ? `  |  Folder step said: ${mkdirProblem}` : '') });
+    }
+  };
+
+  // ---------- Run & fix: npm install, start the app, let the AI repair errors (up to 3 times) ----------
+  const runAndFix = async (index) => {
+    const m = messages[index];
+    if (!m || !m.projectRoot || m.fixStatus === 'running') return;
+    if (!model) { patchMessage(index, { fixLog: ['Pick a model first.'], fixStatus: 'failed' }); return; }
+
+    patchMessage(index, { fixStatus: 'running', fixLog: ['Starting...'] });
+    let finalType = 'error';
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/autofix/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: model.provider, model: model.model, root: m.projectRoot, maxFixes: 3 }),
+      });
+      if (!res.ok || !res.body) {
+        const d = await res.json().catch(() => ({}));
+        addFixLog(index, 'Failed: ' + (d.error || 'request failed'));
+      } else {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            let ev;
+            try { ev = JSON.parse(line); } catch { continue; }
+            addFixLog(index, ev.message);
+            if (ev.type === 'done' || ev.type === 'error') finalType = ev.type;
+          }
+        }
+      }
+    } catch (err) {
+      addFixLog(index, 'Failed: ' + err.message);
+    }
+    patchMessage(index, { fixStatus: finalType === 'done' ? 'ok' : 'failed' });
+  };
+
   // ---------- send / retry / edit ----------
   // Asks the AI for a reply to `history` (the last message in it is the user's question).
   // Everything the editor knew when the question was asked is stored on that user message (m.ctx),
@@ -277,13 +493,19 @@ function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile =
     const selectionRange = selection ? (c.range || null) : null;
     const fileName = c.fileName || 'unknown';
     const askedFix = FIX_INTENT.test(lastUser.content);
+    const builder = !!c.workspacePath && PROJECT_INTENT.test(lastUser.content);
     const msgIndex = history.length; // where the assistant message will land
 
     setLoading(true);
 
+    // Local Ollama models are small and slow, so send less. Cloud models (Gemini etc.) can take much more.
+    const isLocal = String(model.provider || '').toLowerCase() === 'ollama';
+    const maxChars = isLocal ? MAX_FILE_CHARS : 30000;
+    const maxHistory = isLocal ? 6 : 20;
+
     const parts = [SYSTEM_PROMPT];
     if (selection) {
-      parts.push(`The user has this code SELECTED in the editor (file: ${fileName}):\n\`\`\`\n${selection.slice(0, MAX_FILE_CHARS)}\n\`\`\``);
+      parts.push(`The user has this code SELECTED in the editor (file: ${fileName}):\n\`\`\`\n${selection.slice(0, maxChars)}\n\`\`\``);
     }
     if (c.problems && c.problems.length > 0) {
       const list = c.problems.slice(0, 15)
@@ -292,14 +514,16 @@ function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile =
       parts.push(`The IDE reports these problems in the active file (${fileName}):\n${list}`);
     }
     (c.fileObjs || []).forEach(f => {
-      const content = (f.content || '').length > MAX_FILE_CHARS
-        ? f.content.slice(0, MAX_FILE_CHARS) + '\n... [file truncated]'
+      const content = (f.content || '').length > maxChars
+        ? f.content.slice(0, maxChars) + '\n... [file truncated]'
         : (f.content || '');
       parts.push(`File: ${f.path}\n\`\`\`${f.language || ''}\n${content}\n\`\`\``);
     });
 
-    // last 6 only (small models have a small context window); error bubbles are never sent
-    const cleanMessages = history.filter(m => !m.isError).slice(-6).map(({ role, content }) => ({ role, content }));
+    if (builder) { parts.length = 0; parts.push(PROJECT_PROMPT); } // project mode ignores the open file / errors
+
+    // local models get the last 6 messages only (small context window); error bubbles are never sent
+    const cleanMessages = history.filter(m => !m.isError).slice(-maxHistory).map(({ role, content }) => ({ role, content }));
     const requestMessages = [{ role: 'system', content: parts.join('\n\n') }, ...cleanMessages];
 
     const sentChars = JSON.stringify(requestMessages).length;
@@ -323,15 +547,18 @@ function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile =
         const reply = data.reply;
         const blocks = extractCodeBlocks(reply);
         const fixCode = blocks.length ? blocks[blocks.length - 1] : '';
+        const projectFiles = builder ? parseProjectFiles(reply) : [];
         setMessages([...history, {
           role: 'assistant', content: reply,
           filePath: c.filePath || null,
           selectionRange,
+          ...(projectFiles.length ? { projectFiles, projectName: '', workspacePath: c.workspacePath, projectStatus: 'ready' } : {}),
+          ...(!c.workspacePath && PROJECT_INTENT.test(lastUser.content) ? { noFolderHint: true } : {}),
         }]);
 
         // "fix this" -> apply automatically, but only when it is clearly safe:
         //  a selection was fixed, or the code block looks like the whole file
-        if (askedFix && fixCode && c.filePath) {
+        if (askedFix && fixCode && c.filePath && !builder) {
           const fileText = c.fileContent || '';
           const fileLines = lineCount(fileText);
           const looksComplete = selectionRange || fileLines <= 6 || lineCount(fixCode) >= fileLines * 0.6;
@@ -382,6 +609,7 @@ function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile =
         filePath: cur ? cur.path : null,
         fileName: curName,
         fileContent: cur ? (cur.content || '') : '',
+        workspacePath: workspacePath || '',
       },
     };
     const history = [...messages, userMsg];
@@ -525,7 +753,7 @@ function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile =
                     whiteSpace: m.role === 'assistant' && !m.isError ? 'normal' : 'pre-wrap',
                     lineHeight: 1.55, wordBreak: 'break-word',
                   }}>
-                    {renderContent(m.content, m.role === 'assistant' && !m.isError
+                    {renderContent(m.content, m.role === 'assistant' && !m.isError && !m.projectFiles
                       ? (code) => applyFix(i, code, false, m) : null,
                       m.role === 'assistant' && !m.isError)}
                   </div>
@@ -545,6 +773,85 @@ function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile =
                 {m.files && m.files.length > 0 && (
                   <div style={{ color: C.muted, fontSize: '10px', marginTop: '4px' }}>
                     📎 {m.files.join(', ')}
+                  </div>
+                )}
+                {m.role === 'assistant' && m.noFolderHint && (
+                  <div style={{ fontSize: '11px', marginTop: '4px', color: C.muted }}>
+                    To let me create these files for you, open a folder first (File → Open Folder), then ask again.
+                  </div>
+                )}
+                {m.role === 'assistant' && m.projectFiles && (
+                  <div style={{
+                    maxWidth: '90%', width: '90%', marginTop: '8px', background: C.card,
+                    border: `1px solid ${C.border}`, borderRadius: '10px', padding: '10px', boxSizing: 'border-box',
+                  }}>
+                    <div style={{ color: '#fff', fontSize: '12px', fontWeight: 600, marginBottom: '6px' }}>
+                      📁 {m.projectFiles.length} files ready to create
+                    </div>
+                    <div style={{
+                      maxHeight: '110px', overflowY: 'auto', fontSize: '11px', color: '#c9cde0',
+                      fontFamily: 'Consolas, monospace', marginBottom: '8px',
+                    }}>
+                      {m.projectFiles.map(f => <div key={f.path}>{f.path}</div>)}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: C.muted, marginBottom: '8px' }}>
+                      <span>Sub-folder (optional):</span>
+                      <input
+                        value={m.projectName || ''}
+                        placeholder="empty = open folder"
+                        onChange={(e) => patchMessage(i, { projectName: e.target.value })}
+                        disabled={m.projectStatus !== 'ready'}
+                        style={{
+                          flex: 1, minWidth: 0, background: C.panel, color: C.text, border: `1px solid ${C.border}`,
+                          borderRadius: '6px', padding: '3px 6px', fontSize: '11px', outline: 'none',
+                        }}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+                      <span
+                        onClick={m.projectStatus === 'ready' ? () => createProject(i) : undefined}
+                        style={{
+                          ...pillStyle, display: 'inline-flex', color: '#fff', borderColor: C.accent,
+                          background: m.projectStatus === 'ready' ? C.accent : '#2a2e3d',
+                          cursor: m.projectStatus === 'ready' ? 'pointer' : 'default',
+                        }}
+                      >
+                        {m.projectStatus === 'creating' ? 'Creating…' : m.projectStatus === 'done' ? '✓ Created' : 'Create project'}
+                      </span>
+                      {m.projectStatus === 'done' && m.projectRoot && (
+                        <span
+                          onClick={m.fixStatus === 'running' ? undefined : () => runAndFix(i)}
+                          title="Installs packages, starts the app and lets the AI repair errors (up to 3 times)"
+                          style={{
+                            ...pillStyle, display: 'inline-flex', color: '#fff', borderColor: '#2f8f5b',
+                            background: m.fixStatus === 'running' ? '#2a2e3d' : '#2f8f5b',
+                            cursor: m.fixStatus === 'running' ? 'default' : 'pointer',
+                          }}
+                        >
+                          {m.fixStatus === 'running' ? 'Running…' : (m.fixStatus ? '▶ Run & fix again' : '▶ Run & fix')}
+                        </span>
+                      )}
+                    </div>
+                    {m.projectNote && (
+                      <div style={{ fontSize: '11px', marginTop: '6px', color: m.projectStatus === 'done' ? '#7ee2a8' : '#ff9aa8' }}>
+                        {m.projectNote}
+                      </div>
+                    )}
+                    {m.fixLog && m.fixLog.length > 0 && (
+                      <div style={{
+                        marginTop: '8px', maxHeight: '160px', overflowY: 'auto', background: '#0d0f16',
+                        border: `1px solid ${C.border}`, borderRadius: '6px', padding: '6px 8px',
+                        fontSize: '11px', fontFamily: 'Consolas, monospace', whiteSpace: 'pre-wrap',
+                        color: m.fixStatus === 'ok' ? '#7ee2a8' : (m.fixStatus === 'failed' ? '#ff9aa8' : '#c9cde0'),
+                      }}>
+                        {m.fixLog.map((l, k) => <div key={k}>{l}</div>)}
+                      </div>
+                    )}
+                    {m.fixStatus === 'ok' && (
+                      <div style={{ fontSize: '11px', marginTop: '6px', color: C.muted }}>
+                        Open a terminal in the project folder, run <b style={{ color: '#a99dff' }}>npm start</b>, then open http://localhost:3001 in your browser.
+                      </div>
+                    )}
                   </div>
                 )}
                 {m.role === 'user' && editingIndex !== i && !loading && (

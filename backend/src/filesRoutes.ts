@@ -37,14 +37,29 @@ router.get('/read', (req, res) => {
   }
 });
 
-// Create or update a file
+// Create or update a file (missing parent folders are created automatically)
 router.post('/write', (req, res) => {
   const { path: filePath, content } = req.body;
   if (!filePath) {
     return res.status(400).json({ error: 'path is required in request body' });
   }
   try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, content ?? '');
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create a folder (and any missing parent folders)
+router.post('/mkdir', (req, res) => {
+  const { path: dirPath } = req.body;
+  if (!dirPath) {
+    return res.status(400).json({ error: 'path is required in request body' });
+  }
+  try {
+    fs.mkdirSync(dirPath, { recursive: true });
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

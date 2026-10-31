@@ -785,6 +785,7 @@ function App() {
               getEditorContext={getEditorContext}
               onApplyCode={applyToEditor}
               onUndoCode={undoEditorEdit}
+              workspacePath={workspacePath}
             />
           </div>
         </>
