@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { Terminal as XTerm } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import 'xterm/css/xterm.css';
@@ -9,30 +9,26 @@ export default function Terminal({ cwd = '' }) {
   const containerRef = useRef(null);
   const xtermRef = useRef(null);
   const socketRef = useRef(null);
-  const fitAddonRef = useRef(null);
 
   useEffect(() => {
     const term = new XTerm({
       cursorBlink: true,
-      fontFamily: 'Menlo, Consolas, monospace',
       fontSize: 13,
+      fontFamily: 'Consolas, "Courier New", monospace',
       theme: terminalTheme,
     });
+    xtermRef.current = term;
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.open(containerRef.current);
-    xtermRef.current = term;
-    fitAddonRef.current = fitAddon;
 
-    // Only fit when the container has a real size, to avoid xterm crashing on a 0x0 container
+    // fit() throws if the panel is hidden or has no size yet, so never let it crash
     const safeFit = () => {
-      const el = containerRef.current;
-      if (!el || el.offsetWidth === 0 || el.offsetHeight === 0) return;
       try {
         fitAddon.fit();
-      } catch (err) {
-        console.warn('Terminal fit skipped:', err);
+      } catch {
+        /* container not visible yet */
       }
     };
 
@@ -44,7 +40,8 @@ export default function Terminal({ cwd = '' }) {
     socketRef.current = socket;
 
     socket.onopen = () => {
-      term.writeln('\x1b[32m[Connected]\x1b[0m');
+      safeFit();
+      term.focus();
     };
 
     socket.onmessage = (event) => {
@@ -55,13 +52,13 @@ export default function Terminal({ cwd = '' }) {
         } else if (msg.type === 'exit') {
           term.writeln(`\r\n\x1b[33m[Process exited with code ${msg.code}]\x1b[0m`);
         }
-      } catch (err) {
-        console.error('Invalid message from server:', err);
+      } catch {
+        /* ignore malformed messages */
       }
     };
 
     socket.onerror = () => {
-      term.writeln('\r\n\x1b[31m[WebSocket error]\x1b[0m');
+      term.writeln('\r\n\x1b[31m[Could not reach the backend: is it running?]\x1b[0m');
     };
 
     socket.onclose = () => {
@@ -88,9 +85,12 @@ export default function Terminal({ cwd = '' }) {
             term.write('\b \b');
           }
         } else if (code === 3) {
-          // Ctrl+C with nothing selected: cancel the line being typed
+          // Ctrl+C with nothing selected: cancel the line and stop whatever is running
           term.write('^C\r\n');
           inputBuffer = '';
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: 'interrupt' }));
+          }
         } else if (code >= 32) {
           inputBuffer += ch;
           term.write(ch);
@@ -161,7 +161,13 @@ export default function Terminal({ cwd = '' }) {
   return (
     <div
       ref={containerRef}
-      style={{ width: '100%', height: '100%', minHeight: '100px' }}
+      style={{
+        width: '100%',
+        height: '100%',
+        padding: '4px 8px',
+        boxSizing: 'border-box',
+        background: terminalTheme.background,
+      }}
     />
   );
 }
