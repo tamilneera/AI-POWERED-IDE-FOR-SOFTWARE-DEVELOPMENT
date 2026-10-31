@@ -26,6 +26,7 @@ export default function BottomPanel({
   onProblemClick,
   logs,
   onClearLogs,
+  cwd = '',
 }) {
   const [tabs, setTabs] = useState([{ id: nextId, label: `Terminal ${nextId}` }]);
   const [activeId, setActiveId] = useState(tabs[0].id);
@@ -237,7 +238,7 @@ export default function BottomPanel({
                 inset: 0,
               }}
             >
-              <Terminal />
+              <Terminal key={cwd} cwd={cwd} />
             </div>
           ))}
         </div>
