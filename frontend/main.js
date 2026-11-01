@@ -41,6 +41,14 @@ ipcMain.handle('dialog:openFile', async (event) => {
   return result.canceled ? null : result.filePaths[0];
 });
 
+ipcMain.handle('shell:openExternal', async (event, url) => {
+  if (typeof url === 'string' && /^(https?|file):\/\//.test(url)) {
+    await shell.openExternal(url);
+    return true;
+  }
+  return false;
+});
+
 ipcMain.handle('dialog:openFolder', async (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   const result = await dialog.showOpenDialog(win, { properties: ['openDirectory'] });
