@@ -11,7 +11,6 @@ import LayoutToggles from './Components/LayoutToggles';
 import ResizeHandle from './Components/ResizeHandle';
 import { useLayout } from './useLayout';
 import { defineIdeTheme } from './theme';
-import ExplainModal from './Components/ExplainModal';
 
 const DEFAULT_WORKSPACE = '';
 
@@ -101,9 +100,11 @@ function App() {
   const [markers, setMarkers] = useState([]);
   const [logs, setLogs] = useState([]);
   const editorRef = useRef(null);
+  const monacoRef = useRef(null);
+  const [editorReady, setEditorReady] = useState(0);
+  const lintWarned = useRef({});
   const [selectedModel, setSelectedModel] = useState(null);
   const [runInfo, setRunInfo] = useState(null); // null | { starting: true } | { running: true, url }
-  const [explain, setExplain] = useState(null); // { title, text, loading }
 
   // layout: side bar / AI panel visibility + sizes (remembered between runs)
   // togglePanel is defined further down, so it is wrapped in an arrow (looked up only when Ctrl+J is pressed)
@@ -138,6 +139,60 @@ function App() {
   useEffect(() => {
     setMarkers([]);
   }, [activeFile]);
+
+  // Python / Java error checking: the backend runs the real tools and we draw the squiggles.
+  // Setting markers also fills the Problems tab, the error counter and the chat's error context.
+  useEffect(() => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    const model = editor && editor.getModel();
+    if (!activeTab || !monaco || !model) return;
+
+    const lang = activeTab.language;
+    if (lang !== 'python' && lang !== 'java') {
+      monaco.editor.setModelMarkers(model, 'lint', []); // other languages use the built-in checker
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/lint/check`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ language: lang, content: activeTab.content, path: activeTab.path }),
+        });
+        const data = await res.json();
+        if (editor.getModel() !== model) return;
+
+        if (data.available === false) {
+          monaco.editor.setModelMarkers(model, 'lint', []);
+          if (!lintWarned.current[lang]) { lintWarned.current[lang] = true; setStatus(data.reason || 'Checker not available'); }
+          return;
+        }
+
+        const out = (data.diagnostics || []).map((d) => {
+          const lineNo = Math.min(Math.max(1, d.line || 1), model.getLineCount());
+          const maxCol = model.getLineMaxColumn(lineNo);
+          const startCol = Math.min(Math.max(1, d.column || 1), maxCol);
+          const word = model.getWordAtPosition({ lineNumber: lineNo, column: startCol });
+          return {
+            severity: d.severity === 'warning' ? monaco.MarkerSeverity.Warning : monaco.MarkerSeverity.Error,
+            message: d.message,
+            startLineNumber: lineNo,
+            startColumn: startCol,
+            endLineNumber: lineNo,
+            endColumn: word ? word.endColumn : maxCol,
+            source: lang === 'python' ? 'Python' : 'javac',
+          };
+        });
+        monaco.editor.setModelMarkers(model, 'lint', out);
+      } catch {
+        // backend not reachable: leave the markers as they are
+      }
+    }, 800);
+
+    return () => clearTimeout(timer);
+  }, [activeTab ? activeTab.content : null, activeTab ? activeTab.path : null, activeTab ? activeTab.language : null, editorReady]);
 
   useEffect(() => {
     fetch(`${BACKEND_URL}/api/settings`)
@@ -329,66 +384,6 @@ function App() {
     }
     log('■ App stopped');
     setRunInfo(null);
-  };
-
-  // ---------- Explain Code / Explain Error ----------
-  // Sends the selection (or the whole file) / the first editor error to the AI and shows the answer in a window
-  const runExplain = async (mode) => {
-    if (!activeTab) { setStatus('Open a file first'); return; }
-
-    // use the model picked in the chat, or fall back to the first available one
-    let model = selectedModel;
-    if (!model) {
-      try {
-        const r = await fetch(`${BACKEND_URL}/api/ai/models`);
-        const d = await r.json();
-        model = d.models && d.models[0];
-      } catch { /* handled below */ }
-    }
-    if (!model) { setStatus('No AI model available. Is Ollama running?'); return; }
-
-    let url, body, title;
-    if (mode === 'error') {
-      const err = problems.find(p => p.severity === 8) || problems[0];
-      if (!err) { setStatus('No problems to explain'); return; }
-      const lines = activeTab.content.split('\n');
-      const snippet = lines.slice(Math.max(0, err.line - 6), err.line + 5).join('\n');
-      url = '/api/ai/explain-error';
-      title = `Explain error (line ${err.line})`;
-      body = {
-        provider: model.provider, model: model.model,
-        errorMessage: err.message, line: err.line, code: snippet,
-        language: activeTab.language, fileName: activeTab.name,
-      };
-    } else {
-      const editor = editorRef.current;
-      let code = '';
-      if (editor) {
-        const sel = editor.getSelection();
-        if (sel && !sel.isEmpty()) code = editor.getModel().getValueInRange(sel);
-      }
-      if (!code) code = activeTab.content; // no selection: explain the whole file
-      url = '/api/ai/explain';
-      title = `Explain code: ${activeTab.name}`;
-      body = {
-        provider: model.provider, model: model.model, code,
-        language: activeTab.language, fileName: activeTab.name,
-      };
-    }
-
-    setStatus('');
-    setExplain({ title, text: '', loading: true });
-    try {
-      const res = await fetch(`${BACKEND_URL}${url}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      setExplain({ title, text: data.reply || ('Error: ' + (data.error || 'no reply')), loading: false });
-    } catch (err) {
-      setExplain({ title, text: 'Error: ' + err.message, loading: false });
-    }
   };
 
   // VS Code behaviour: clicking the active activity-bar icon hides the side bar
@@ -822,8 +817,6 @@ function App() {
               <h3 style={{ color: 'white', margin: '0 0 0 12px', fontSize: '15px' }}>AI-Powered IDE</h3>
 
               <MenuItem label="AI Chat" active={layout.showChat} onClick={() => toggleLayout('showChat')} />
-              <MenuItem label="Explain Code" onClick={() => runExplain('code')} />
-              <MenuItem label="Explain Error" onClick={() => runExplain('error')} />
 
               <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <span style={{ color: '#f66', fontSize: '13px' }}>{status}</span>
@@ -889,7 +882,11 @@ function App() {
                     value={activeTab.content}
                     onChange={handleCodeChange}
                     beforeMount={defineIdeTheme}
-                    onMount={(editor) => { editorRef.current = editor; }}
+                    onMount={(editor, monaco) => {
+                      editorRef.current = editor;
+                      monacoRef.current = monaco;
+                      setEditorReady((n) => n + 1);
+                    }}
                     onValidate={setMarkers}
                     theme={editorTheme}
                     options={{
@@ -983,15 +980,6 @@ function App() {
             </div>
           </div>
         </div>
-      )}
-
-      {explain && (
-        <ExplainModal
-          title={explain.title}
-          text={explain.text}
-          loading={explain.loading}
-          onClose={() => setExplain(null)}
-        />
       )}
 
       {showSettings && (
