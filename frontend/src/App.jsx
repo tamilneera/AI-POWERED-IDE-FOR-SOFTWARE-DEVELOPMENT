@@ -101,6 +101,7 @@ function App() {
   const [logs, setLogs] = useState([]);
   const editorRef = useRef(null);
   const [selectedModel, setSelectedModel] = useState(null);
+  const [runInfo, setRunInfo] = useState(null); // null | { starting: true } | { running: true, url }
 
   // layout: side bar / AI panel visibility + sizes (remembered between runs)
   // togglePanel is defined further down, so it is wrapped in an arrow (looked up only when Ctrl+J is pressed)
@@ -175,6 +176,43 @@ function App() {
   const errorCount = problems.filter(p => p.severity === 8).length;
   const warningCount = problems.filter(p => p.severity === 4).length;
 
+  // What the AI chat gets automatically with every message: selected text + the editor's errors/warnings
+  const getEditorContext = () => {
+    let selection = '';
+    const editor = editorRef.current;
+    if (editor) {
+      const sel = editor.getSelection();
+      if (sel && !sel.isEmpty()) selection = editor.getModel().getValueInRange(sel);
+    }
+    let range = null;
+    if (editor && selection) {
+      const r = editor.getSelection();
+      range = { startLineNumber: r.startLineNumber, startColumn: r.startColumn, endLineNumber: r.endLineNumber, endColumn: r.endColumn };
+    }
+    return {
+      selection,
+      range,
+      problems: problems.map(p => ({ severity: p.severity, line: p.line, column: p.column, message: p.message })),
+    };
+  };
+
+  // Put AI-written code into the editor (the selection if there was one, otherwise the whole file).
+  // It is a normal editor edit, so Ctrl+Z works and the tab shows the "M" mark until you save.
+  const applyToEditor = ({ code, range }) => {
+    const editor = editorRef.current;
+    const model = editor && editor.getModel();
+    if (!model) return false;
+    editor.pushUndoStop();
+    editor.executeEdits('ai-apply', [{ range: range || model.getFullModelRange(), text: code, forceMoveMarkers: true }]);
+    editor.pushUndoStop();
+    return true;
+  };
+
+  const undoEditorEdit = () => {
+    const editor = editorRef.current;
+    if (editor) { editor.focus(); editor.trigger('ai-apply', 'undo', null); }
+  };
+
   const handleProblemClick = (p) => {
     const editor = editorRef.current;
     if (!editor) return;
@@ -195,6 +233,100 @@ function App() {
     } else {
       openPanel('terminal');
     }
+  };
+
+  // ---------- Run button: start the project and open it in the browser ----------
+  const openInBrowser = (url) => {
+    if (window.electronAPI && window.electronAPI.openExternal) window.electronAPI.openExternal(url);
+    else window.open(url, '_blank');
+  };
+
+  // Save every unsaved file so the app runs the code you see
+  const saveAllDirty = async () => {
+    const dirty = openFiles.filter(f => f.isDirty);
+    for (const f of dirty) {
+      try {
+        const r = await fetch(`${BACKEND_URL}/api/files/write`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: f.path, content: f.content }),
+        });
+        const d = await r.json();
+        if (d.success) {
+          setOpenFiles(prev => prev.map(x => (x.path === f.path ? { ...x, isDirty: false } : x)));
+        }
+      } catch {
+        // keep going; the app will still start with what is on disk
+      }
+    }
+  };
+
+  const handleRun = async () => {
+    if (!workspacePath) { setStatus('Open a folder first'); return; }
+    if (runInfo && runInfo.starting) return;
+
+    setRunInfo({ starting: true });
+    setStatus('');
+    openPanel('output'); // if your Output tab has a different id, change 'output' here
+    log(`▶ Run: ${workspacePath}`);
+    await saveAllDirty();
+
+    let gotUrl = false;
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/devrun/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: workspacePath }),
+      });
+      if (!res.ok || !res.body) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || 'Run request failed');
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          let ev;
+          try { ev = JSON.parse(line); } catch { continue; }
+          if (ev.type === 'url') {
+            gotUrl = true;
+            log(`App is running at ${ev.message}`);
+            setRunInfo({ running: true, url: ev.message });
+            openInBrowser(ev.message);
+          } else if (ev.type === 'error') {
+            log(ev.message, 'error');
+            setStatus('Run failed. See the Output panel.');
+          } else {
+            ev.message.split('\n').filter(l => l.trim()).forEach(l => log(l));
+          }
+        }
+      }
+    } catch (err) {
+      log('Run failed: ' + err.message, 'error');
+      setStatus('Run failed: ' + err.message);
+    }
+    if (!gotUrl) setRunInfo(null);
+  };
+
+  const handleStop = async () => {
+    try {
+      await fetch(`${BACKEND_URL}/api/devrun/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ root: workspacePath }),
+      });
+    } catch {
+      // ignore
+    }
+    log('■ App stopped');
+    setRunInfo(null);
   };
 
   // VS Code behaviour: clicking the active activity-bar icon hides the side bar
@@ -613,6 +745,18 @@ function App() {
               <MenuItem label="Settings" active={showSettings} onClick={() => setShowSettings(true)} />
               <MenuItem label="Terminal" active={isTerminalOpen && panelView === 'terminal'} onClick={togglePanel} />
 
+              {runInfo && runInfo.running ? (
+                <>
+                  <MenuItem label="■ Stop" onClick={handleStop} />
+                  <MenuItem label="↗ Open in browser" onClick={() => openInBrowser(runInfo.url)} />
+                </>
+              ) : (
+                <MenuItem
+                  label={runInfo && runInfo.starting ? 'Starting…' : '▶ Run'}
+                  onClick={handleRun}
+                />
+              )}
+
               <h3 style={{ color: 'white', margin: '0 0 0 12px', fontSize: '15px' }}>AI-Powered IDE</h3>
 
               <MenuItem label="AI Chat" active={layout.showChat} onClick={() => toggleLayout('showChat')} />
@@ -745,6 +889,10 @@ function App() {
               onClose={() => toggleLayout('showChat')}
               openFiles={openFiles}
               activeFile={activeTab}
+              getEditorContext={getEditorContext}
+              onApplyCode={applyToEditor}
+              onUndoCode={undoEditorEdit}
+              workspacePath={workspacePath}
             />
           </div>
         </>

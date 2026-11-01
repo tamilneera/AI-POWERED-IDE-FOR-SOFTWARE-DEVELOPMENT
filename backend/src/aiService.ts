@@ -10,7 +10,13 @@ async function chatWithOllama(model: string, messages: ChatMessage[]): Promise<s
     const res = await fetch('http://localhost:11434/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, messages, stream: false, keep_alive: '30m' }),
+        body: JSON.stringify({
+            model,
+            messages,
+            stream: false,
+            keep_alive: '30m',
+            options: { num_ctx: 8192 }, // room for long project files; lower it if your laptop runs out of RAM
+        }),
     });
     const data: any = await res.json();
     if (!res.ok) throw new Error(data.error || 'Ollama request failed — is Ollama running?');
@@ -46,21 +52,29 @@ async function chatWithGroq(model: string, messages: ChatMessage[]): Promise<str
 async function chatWithGemini(model: string, messages: ChatMessage[]): Promise<string> {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) throw new Error('GEMINI_API_KEY not set in backend/.env');
-    const contents = messages.map(m => ({
-        role: m.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: m.content }],
-    }));
+
+    const system = messages.filter(m => m.role === 'system').map(m => m.content).join('\n\n');
+    const contents = messages
+        .filter(m => m.role !== 'system')
+        .map(m => ({
+            role: m.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: m.content }],
+        }));
+
+    const body: any = { contents, generationConfig: { maxOutputTokens: 8192 } };
+    if (system) body.systemInstruction = { parts: [{ text: system }] };
+
     const res = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
         {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ contents }),
+            body: JSON.stringify(body),
         }
     );
     const data: any = await res.json();
     if (!res.ok) throw new Error(data.error?.message || 'Gemini request failed');
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    return (data.candidates?.[0]?.content?.parts || []).map((p: any) => p.text || '').join('');
 }
 
 export async function chat(options: ChatOptions): Promise<string> {

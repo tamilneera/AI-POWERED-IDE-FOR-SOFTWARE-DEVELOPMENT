@@ -10,6 +10,9 @@ import searchRoutes from './searchRoutes';
 import authRoutes from './authRoutes';
 import 'dotenv/config';
 import aiRoutes from './aiRoutes';
+import autofixRoutes from './autofixRoutes';
+import devRunRoutes from './devRunRoutes';
+
 
 const app = express();
 app.use(cors());
@@ -19,7 +22,8 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/ai', aiRoutes);
-
+app.use('/api/autofix', autofixRoutes);
+app.use('/api/devrun', devRunRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', dbConnected: !!db });
