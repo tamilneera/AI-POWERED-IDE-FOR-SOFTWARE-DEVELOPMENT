@@ -33,7 +33,6 @@ app.get('/api/health', (req, res) => {
 
 app.use('/api/files', filesRoutes);
 
-
 const PORT = 5000;
 const server = createServer(app);
 setupTerminalServer(server);

@@ -46,8 +46,6 @@ router.get('/tree', (req, res) => {
   }
 });
 
-// Live updates: tells the Explorer whenever something changes inside the opened folder.
-// Uses Server-Sent Events, which is what the frontend's EventSource connects to.
 router.get('/watch', (req, res) => {
   const targetPath = req.query.path as string;
   if (!targetPath) {
@@ -69,9 +67,7 @@ router.get('/watch', (req, res) => {
 
   try {
     watcher = fs.watch(targetPath, { recursive: true }, (_event, filename) => {
-      // Ignore noise from folders the Explorer hides anyway
       if (filename && /(^|[\\/])(node_modules|\.git)([\\/]|$)/.test(filename.toString())) return;
-      // Wait a moment so a burst of changes sends just one refresh
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => res.write('data: changed\n\n'), 300);
     });
@@ -84,7 +80,6 @@ router.get('/watch', (req, res) => {
     return;
   }
 
-  // Keeps the connection from timing out while nothing changes
   const heartbeat = setInterval(() => res.write(': ping\n\n'), 30000);
 
   req.on('close', () => {
