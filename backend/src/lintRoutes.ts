@@ -64,7 +64,7 @@ except SyntaxError as e:
     print(json.dumps({"ok": False, "line": e.lineno or 1, "column": e.offset or 1, "message": e.msg}))
 `;
 
-async function checkPython(content: string): Promise<CheckResult> {
+export async function checkPython(content: string): Promise<CheckResult> {
   // 1) syntax errors (needs only Python itself)
   const syntax = await runTool(PY_COMMANDS, ['-c', PY_SYNTAX_SCRIPT], { input: content, env: PY_ENV });
   if (!syntax.found) {
@@ -101,7 +101,7 @@ async function checkPython(content: string): Promise<CheckResult> {
   return { available: true, diagnostics };
 }
 
-async function checkJava(content: string, filePath?: string): Promise<CheckResult> {
+export async function checkJava(content: string, filePath?: string): Promise<CheckResult> {
   // javac needs the file to be named after the public class
   const named = content.match(/public\s+(?:final\s+|abstract\s+)*(?:class|interface|enum|record)\s+(\w+)/);
   const className = named ? named[1] : 'Main';
