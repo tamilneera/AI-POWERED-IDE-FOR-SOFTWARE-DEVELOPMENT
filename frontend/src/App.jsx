@@ -11,6 +11,8 @@ import LayoutToggles from './Components/LayoutToggles';
 import ResizeHandle from './Components/ResizeHandle';
 import { useLayout } from './useLayout';
 import { defineIdeTheme } from './theme';
+import QualityPanel from './Components/QualityPanel';
+import { planFixes } from './autoFix';
 
 const DEFAULT_WORKSPACE = '';
 
@@ -100,8 +102,15 @@ function App() {
   const [markers, setMarkers] = useState([]);
   const [logs, setLogs] = useState([]);
   const editorRef = useRef(null);
+  const monacoRef = useRef(null);
+  const [editorReady, setEditorReady] = useState(0);
+  const lintWarned = useRef({});
   const [selectedModel, setSelectedModel] = useState(null);
   const [runInfo, setRunInfo] = useState(null); // null | { starting: true } | { running: true, url }
+  const [quality, setQuality] = useState(null); // { loading, error, data, fileName, fixNote }
+  const [qualityUseAi, setQualityUseAi] = useState(true);
+  const [qualityAudit, setQualityAudit] = useState(null); // { loading, error, data }
+  const decorationsRef = useRef(null);
 
   // layout: side bar / AI panel visibility + sizes (remembered between runs)
   // togglePanel is defined further down, so it is wrapped in an arrow (looked up only when Ctrl+J is pressed)
@@ -133,9 +142,67 @@ function App() {
     setLogs(prev => [...prev.slice(-499), { time, text, level }]);
   };
 
+  // switching files clears the old error list and the quality marks
   useEffect(() => {
     setMarkers([]);
+    clearQualityMarks();
+    setQuality(null);
+    setQualityAudit(null);
   }, [activeFile]);
+
+  // Python / Java error checking: the backend runs the real tools and we draw the squiggles.
+  // Setting markers also fills the Problems tab, the error counter and the chat's error context.
+  useEffect(() => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    const model = editor && editor.getModel();
+    if (!activeTab || !monaco || !model) return;
+
+    const lang = activeTab.language;
+    if (lang !== 'python' && lang !== 'java') {
+      monaco.editor.setModelMarkers(model, 'lint', []); // other languages use the built-in checker
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/lint/check`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ language: lang, content: activeTab.content, path: activeTab.path }),
+        });
+        const data = await res.json();
+        if (editor.getModel() !== model) return;
+
+        if (data.available === false) {
+          monaco.editor.setModelMarkers(model, 'lint', []);
+          if (!lintWarned.current[lang]) { lintWarned.current[lang] = true; setStatus(data.reason || 'Checker not available'); }
+          return;
+        }
+
+        const out = (data.diagnostics || []).map((d) => {
+          const lineNo = Math.min(Math.max(1, d.line || 1), model.getLineCount());
+          const maxCol = model.getLineMaxColumn(lineNo);
+          const startCol = Math.min(Math.max(1, d.column || 1), maxCol);
+          const word = model.getWordAtPosition({ lineNumber: lineNo, column: startCol });
+          return {
+            severity: d.severity === 'warning' ? monaco.MarkerSeverity.Warning : monaco.MarkerSeverity.Error,
+            message: d.message,
+            startLineNumber: lineNo,
+            startColumn: startCol,
+            endLineNumber: lineNo,
+            endColumn: word ? word.endColumn : maxCol,
+            source: lang === 'python' ? 'Python' : 'javac',
+          };
+        });
+        monaco.editor.setModelMarkers(model, 'lint', out);
+      } catch {
+        // backend not reachable: leave the markers as they are
+      }
+    }, 800);
+
+    return () => clearTimeout(timer);
+  }, [activeTab ? activeTab.content : null, activeTab ? activeTab.path : null, activeTab ? activeTab.language : null, editorReady]);
 
   useEffect(() => {
     fetch(`${BACKEND_URL}/api/settings`)
@@ -327,6 +394,155 @@ function App() {
     }
     log('■ App stopped');
     setRunInfo(null);
+  };
+
+  // ---------- Code Quality ----------
+  const clearQualityMarks = () => {
+    if (decorationsRef.current) {
+      decorationsRef.current.clear();
+      decorationsRef.current = null;
+    }
+  };
+
+  // colored line marks in the editor (they move with the code while you edit)
+  const showQualityMarks = (issues) => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    const model = editor && editor.getModel();
+    if (!editor || !monaco || !model) return;
+    clearQualityMarks();
+    const items = issues
+      .filter(i => i.line >= 1 && i.line <= model.getLineCount())
+      .map(i => ({
+        range: new monaco.Range(i.line, 1, i.line, 1),
+        options: {
+          isWholeLine: true,
+          className: `q-line-${i.severity}`,
+          linesDecorationsClassName: `q-gutter-${i.severity}`,
+          hoverMessage: {
+            value: `**${i.source === 'ai' ? 'AI' : 'Static'}:** ${i.message}${i.suggestion ? '\n\n' + i.suggestion : ''}`,
+          },
+        },
+      }));
+    decorationsRef.current = editor.createDecorationsCollection(items);
+  };
+
+  const closeQuality = () => {
+    clearQualityMarks();
+    setQuality(null);
+    setQualityAudit(null);
+  };
+
+  // "View in Code": show the line (or the whole function) in the middle of the editor
+  const jumpToLine = (line, endLine) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    if (endLine && endLine > line) editor.revealLinesInCenter(line, endLine);
+    else editor.revealLineInCenter(line);
+    editor.setPosition({ lineNumber: line, column: 1 });
+    editor.focus();
+  };
+
+  // note: optional text shown in the panel footer (for example after Apply Fixes)
+  const runQuality = async (note) => {
+    const fixNote = typeof note === 'string' ? note : '';
+    if (!activeTab) { setStatus('Open a file first'); return; }
+    const fileName = activeTab.name;
+
+    // use the model picked in the chat, or fall back to the first available one
+    let model = selectedModel;
+    if (!model && qualityUseAi) {
+      try {
+        const r = await fetch(`${BACKEND_URL}/api/ai/models`);
+        const d = await r.json();
+        model = d.models && d.models[0];
+      } catch { /* the backend explains it in the panel */ }
+    }
+
+    setStatus('');
+    clearQualityMarks();
+    setQuality({ loading: true, error: '', data: null, fileName, fixNote });
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 300000);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/ai/analyze-quality`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          provider: model ? model.provider : undefined,
+          model: model ? model.model : undefined,
+          // the text in the editor right now, including edits that are not saved yet
+          code: editorRef.current ? editorRef.current.getValue() : activeTab.content,
+          language: activeTab.language,
+          fileName,
+          filePath: activeTab.path,
+          useAi: qualityUseAi,
+        }),
+      });
+      clearTimeout(timeout);
+      const data = await res.json();
+      if (!res.ok) {
+        setQuality({ loading: false, error: data.error || 'Analysis failed', data: null, fileName, fixNote });
+        return;
+      }
+      setQuality({ loading: false, error: '', data, fileName, fixNote });
+      showQualityMarks(data.issues);
+    } catch (err) {
+      clearTimeout(timeout);
+      const msg = err.name === 'AbortError' ? 'The analysis took longer than 5 minutes.' : err.message;
+      setQuality({ loading: false, error: msg, data: null, fileName, fixNote });
+    }
+  };
+
+  // ✔ Apply Fixes: safe automatic refactors, applied as ONE editor edit (Ctrl+Z undoes all of them)
+  const applyQualityFixes = () => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    const model = editor && editor.getModel();
+    if (!editor || !monaco || !model || !activeTab) return;
+
+    const plan = planFixes(model.getValue(), activeTab.language);
+    if (plan.count === 0) {
+      setQuality((q) => (q ? { ...q, fixNote: 'No automatic fixes are available right now.' } : q));
+      return;
+    }
+
+    const total = model.getLineCount();
+    const ops = plan.edits.map((e) => {
+      const maxCol = model.getLineMaxColumn(e.line);
+      if (e.type === 'delete') {
+        if (e.line < total) return { range: new monaco.Range(e.line, 1, e.line + 1, 1), text: '' };
+        if (e.line > 1) return { range: new monaco.Range(e.line - 1, model.getLineMaxColumn(e.line - 1), e.line, maxCol), text: '' };
+        return { range: new monaco.Range(1, 1, 1, maxCol), text: '' };
+      }
+      return { range: new monaco.Range(e.line, 1, e.line, maxCol), text: e.text };
+    });
+
+    editor.pushUndoStop();
+    editor.executeEdits('quality-fix', ops);
+    editor.pushUndoStop();
+
+    runQuality(`Applied ${plan.count} automatic ${plan.count === 1 ? 'fix' : 'fixes'}. Press Ctrl+Z in the editor to undo them all at once.`);
+  };
+
+  // npm audit of the open project's dependencies
+  const runAudit = async () => {
+    if (!workspacePath) return;
+    setQualityAudit({ loading: true, error: '', data: null });
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/ai/security-check`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectRoot: workspacePath, useAi: false }),
+      });
+      const data = await res.json();
+      if (!res.ok) setQualityAudit({ loading: false, error: data.error || 'Scan failed', data: null });
+      else setQualityAudit({ loading: false, error: '', data: data.audit || [] });
+    } catch (err) {
+      setQualityAudit({ loading: false, error: err.message, data: null });
+    }
   };
 
   // VS Code behaviour: clicking the active activity-bar icon hides the side bar
@@ -609,6 +825,9 @@ function App() {
 
   const terminalHeight = isTerminalMaximized ? '80vh' : `${layout.panelHeight}px`;
 
+  // which safe automatic fixes exist for the open file (only worked out while the quality panel is open)
+  const fixPlan = quality && activeTab ? planFixes(activeTab.content, activeTab.language) : null;
+
   return (
     <div
       style={{ display: 'flex', height: '100vh', width: '100%', background: '#12141c' }}
@@ -760,6 +979,7 @@ function App() {
               <h3 style={{ color: 'white', margin: '0 0 0 12px', fontSize: '15px' }}>AI-Powered IDE</h3>
 
               <MenuItem label="AI Chat" active={layout.showChat} onClick={() => toggleLayout('showChat')} />
+              <MenuItem label="🔍 Quality" active={!!quality} onClick={() => (quality ? closeQuality() : runQuality())} />
 
               <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <span style={{ color: '#f66', fontSize: '13px' }}>{status}</span>
@@ -825,7 +1045,11 @@ function App() {
                     value={activeTab.content}
                     onChange={handleCodeChange}
                     beforeMount={defineIdeTheme}
-                    onMount={(editor) => { editorRef.current = editor; }}
+                    onMount={(editor, monaco) => {
+                      editorRef.current = editor;
+                      monacoRef.current = monaco;
+                      setEditorReady((n) => n + 1);
+                    }}
                     onValidate={setMarkers}
                     theme={editorTheme}
                     options={{
@@ -842,6 +1066,21 @@ function App() {
                   </div>
                 )}
               </div>
+
+              {quality && (
+                <QualityPanel
+                  state={quality}
+                  useAi={qualityUseAi}
+                  onToggleAi={setQualityUseAi}
+                  onRerun={() => runQuality()}
+                  onJump={jumpToLine}
+                  onClose={closeQuality}
+                  audit={qualityAudit}
+                  onAudit={runAudit}
+                  fixes={fixPlan}
+                  onApplyFixes={applyQualityFixes}
+                />
+              )}
 
               {panelMounted && isTerminalOpen && !isTerminalMaximized && (
                 <ResizeHandle direction="horizontal" onResize={(d) => resizeBy('panelHeight', -d)} />
