@@ -15,6 +15,7 @@ import devRunRoutes from './devRunRoutes';
 import lintRoutes from './lintRoutes';
 import qualityRoutes from './qualityRoutes';
 import benchmarkRoutes from './benchmarkRoutes';
+import agentRoutes from './agentRoutes';
 
 
 
@@ -31,7 +32,7 @@ app.use('/api/devrun', devRunRoutes);
 app.use('/api/lint', lintRoutes);
 app.use('/api/ai', qualityRoutes);
 app.use('/api/benchmark', benchmarkRoutes);
-
+app.use('/api/agent', agentRoutes);
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', dbConnected: !!db });
 });
