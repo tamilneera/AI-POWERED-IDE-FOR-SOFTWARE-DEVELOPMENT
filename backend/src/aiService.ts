@@ -42,7 +42,7 @@ async function chatWithGroq(model: string, messages: ChatMessage[]): Promise<str
     const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({ model, messages }),
+        body: JSON.stringify({ model, messages, max_tokens: Number(process.env.GROQ_MAX_TOKENS) || 5000 }),
     });
     const data: any = await res.json();
     if (!res.ok) throw new Error(data.error?.message || 'Groq request failed');
