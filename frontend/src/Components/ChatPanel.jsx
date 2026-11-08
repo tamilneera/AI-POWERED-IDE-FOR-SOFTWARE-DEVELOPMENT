@@ -1,6 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
 import { BACKEND_URL } from '../config';
 import ModelSelector from './ModelSelector';
+import BuilderCard from './BuilderCard';
+import AgentCard from './AgentCard';
+import { startRun } from '../agent';
+import { parseTree, isBinaryPath, dirsOfFiles } from '../builder';
 import { C } from '../theme';
 
 const MAX_FILE_CHARS = 4000; // keeps local models from choking on huge files
@@ -29,6 +33,11 @@ const SCOPES = [
   { id: 'open', label: 'Open files' },
 ];
 
+// Chat answers questions. Agent builds a project, runs it and fixes errors by itself.
+const MODES = [
+  { id: 'chat', label: '💬 Chat' },
+  { id: 'agent', label: '🤖 Agent' },
+];
 
 const pillStyle = {
   display: 'flex', alignItems: 'center', gap: '4px',
@@ -233,7 +242,7 @@ console.log("hi");
 \`\`\`
 3. Finish with a short "How to run" list.
 
-ARCHITECTURE (always, unless the user asks for something else):
+ARCHITECTURE: if the user gives a folder structure or a technology stack, follow it EXACTLY (those paths and technologies, no extra files). Otherwise use this default:
 - ONE Node project at the top level: package.json (scripts: "start": "node server.js"), server.js, README.md, and a public/ folder with index.html, styles.css and app.js.
 - server.js uses Express only (no other dependencies), serves the public/ folder with express.static, listens on process.env.PORT || 3001 (never 5000 or 3000), and prints "Server running on http://localhost:3001".
 - The page is plain HTML, CSS and JavaScript (no React, no build step, no CDN links, no external fonts). It calls the API with relative URLs like fetch("/api/todos").
@@ -283,6 +292,7 @@ function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile =
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState('chat');
   const [scope, setScope] = useState('active');
+  const [mode, setMode] = useState('chat'); // 'chat' = answers questions, 'agent' = builds and runs projects
   const [attachments, setAttachments] = useState([]); // manual: [{ path, name, content, language }]
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [editingIndex, setEditingIndex] = useState(null);
@@ -294,6 +304,34 @@ function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile =
   useEffect(() => {
     endRef.current?.scrollIntoView();
   }, [messages, loading, tab]);
+
+  // an unfinished staged build in the open folder can be continued
+  useEffect(() => {
+    if (!workspacePath) return undefined;
+    let cancelled = false;
+    const base = workspacePath.replace(/[\\/]+$/, '');
+    const sep = base.includes('\\') ? '\\' : '/';
+    fetch(`${BACKEND_URL}/api/files/read?path=${encodeURIComponent(base + sep + '.ide-builder.json')}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled || !data || typeof data.content !== 'string') return;
+        let st;
+        try { st = JSON.parse(data.content); } catch { return; }
+        if (!st || !Array.isArray(st.files) || !Array.isArray(st.done)) return;
+        const left = st.files.filter((f) => !isBinaryPath(f) && !st.done.includes(f)).length;
+        if (left === 0) return;
+        setMessages((prev) => (prev.some((m) => m.builder && m.builder.resumed) ? prev : [...prev, {
+          role: 'assistant',
+          content: `Unfinished project build found in this folder: ${st.done.length} of ${st.files.length} files are written. You can continue where it stopped.`,
+          builder: {
+            requirements: st.requirements || '', resumed: true, done: st.done,
+            manifest: { root: '', files: st.files, dirs: dirsOfFiles(st.files) },
+          },
+        }]));
+      })
+      .catch(() => { /* no progress file: nothing to resume */ });
+    return () => { cancelled = true; };
+  }, [workspacePath]);
 
   // ---------- attachments ----------
   const addAttachment = (file) => {
@@ -581,6 +619,41 @@ function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile =
     }
   };
 
+  // A project request that comes with a folder structure (or asks for a full-stack app) is built in stages
+  const startBuilder = (text, history) => {
+    if (!workspacePath || !PROJECT_INTENT.test(text)) return false;
+    const tree = parseTree(text);
+    const hasTree = !!(tree && tree.files.length >= 6);
+    const wantsFullStack = /\b(full[\s-]?stack|backend\s+and\s+frontend|frontend\s+and\s+backend|client\s+and\s+server|mern)\b/i.test(text);
+    if (!hasTree && !wantsFullStack) return false;
+    const intro = hasTree
+      ? `I found a folder structure in your message: ${tree.files.length} files in ${tree.dirs.length} folders. I will create it exactly as written, then write the code in stages, a few files at a time.`
+      : 'This is a full-stack project, too big for one answer. I will first plan the folder structure, then create it and write the code in stages, a few files at a time.';
+    setMessages([...history, {
+      role: 'assistant', content: intro,
+      builder: { requirements: text, manifest: hasTree ? tree : null, needsPlan: !hasTree, autoRun: true },
+    }]);
+    return true;
+  };
+
+  // Agent mode: the AI writes the files, runs the commands, tests the app and fixes errors by itself
+  const startAgent = (text, history) => {
+    if (!workspacePath) {
+      setMessages([...history, {
+        role: 'assistant', isError: true,
+        content: 'Open a folder first (File → Open Folder). The agent builds inside the open folder.',
+      }]);
+      return;
+    }
+    const id = 'agent-' + Date.now();
+    startRun(id, { goal: text, root: workspacePath, model });
+    setMessages([...history, {
+      role: 'assistant',
+      content: 'On it. I will write the files, run the commands and fix errors until the app works.',
+      agent: { id },
+    }]);
+  };
+
   const send = () => {
     if (!input.trim() || !model || loading) return;
 
@@ -613,9 +686,11 @@ function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile =
       },
     };
     const history = [...messages, userMsg];
-    setMessages(history);
     setInput('');
     setAttachments([]);
+    if (mode === 'agent') { startAgent(userMsg.content, history); return; }
+    if (startBuilder(userMsg.content, history)) return;
+    setMessages(history);
     requestReply(history);
   };
 
@@ -715,7 +790,8 @@ function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile =
               <div style={{ color: C.muted, fontSize: '12px', lineHeight: 1.7 }}>
                 Paste code or just ask. I'll explain it, find the bugs and show the fix. The file open in the editor,
                 your selected text and the editor's errors are included automatically. Use <b style={{ color: '#a99dff' }}>+</b> to
-                attach other files.
+                attach other files. Switch the pill to <b style={{ color: '#a99dff' }}>🤖 Agent</b> and describe a project:
+                I will create it, run it and fix the errors by myself.
               </div>
             )}
             {messages.map((m, i) => (
@@ -780,6 +856,15 @@ function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile =
                     To let me create these files for you, open a folder first (File → Open Folder), then ask again.
                   </div>
                 )}
+
+                {m.role === 'assistant' && m.builder && (
+                  <BuilderCard builder={m.builder} workspacePath={workspacePath} model={model} />
+                )}
+
+                {m.role === 'assistant' && m.agent && (
+                  <AgentCard id={m.agent.id} />
+                )}
+
                 {m.role === 'assistant' && m.projectFiles && (
                   <div style={{
                     maxWidth: '90%', width: '90%', marginTop: '8px', background: C.card,
@@ -857,7 +942,7 @@ function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile =
                 {m.role === 'user' && editingIndex !== i && !loading && (
                   <span onClick={() => startEdit(i)} style={actionLinkStyle} title="Edit this message and ask again">✎ Edit</span>
                 )}
-                {m.role === 'assistant' && i === lastIndex && !loading && (
+                {m.role === 'assistant' && !m.agent && i === lastIndex && !loading && (
                   <span onClick={retry} style={actionLinkStyle} title="Ask the same question again">↻ Retry</span>
                 )}
               </div>
@@ -916,7 +1001,7 @@ function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile =
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask AI anything..."
+            placeholder={mode === 'agent' ? 'Describe the project to build…' : 'Ask AI anything...'}
             disabled={!model}
             rows={2}
             style={{
@@ -990,6 +1075,7 @@ function ChatPanel({ model, onModelChange, onClose, openFiles = [], activeFile =
               </div>
 
               <PillMenu value={scope} options={SCOPES} onChange={setScope} title="Which file is sent with every message" />
+              <PillMenu value={mode} options={MODES} onChange={setMode} title="Chat answers questions. Agent builds and runs projects." />
               <ModelSelector selected={model} onSelect={onModelChange} />
             </div>
 
